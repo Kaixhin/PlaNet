@@ -1,0 +1,5 @@
+gym
+opencv-python
+seaborn
+torch
+tqdm

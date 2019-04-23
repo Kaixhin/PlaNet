@@ -1,0 +1,43 @@
+import numpy as np
+import torch
+
+
+class ExperienceReplay():
+  def __init__(self, size, symbolic_env, observation_size, action_size, device):
+    self.device = device
+    self.symbolic_env = symbolic_env
+    self.size = size
+    self.observations = np.empty((size, observation_size) if symbolic_env else (size, 3, 64, 64), dtype=np.float32 if symbolic_env else np.uint8)
+    self.actions = np.empty((size, action_size), dtype=np.float32)
+    self.rewards = np.empty((size, ), dtype=np.float32) 
+    self.nonterminals = np.empty((size, ), dtype=np.float32)
+    self.idx = 0
+    self.full = False  # Tracks if memory has been filled/all slots are valid
+
+  def append(self, observation, action, reward, done):
+    if self.symbolic_env:
+      self.observations[self.idx] = observation.numpy()
+    else:
+      self.observations[self.idx] = np.multiply(observation.numpy(), 255.).astype(np.uint8)  # Discretise visual observations (to save memory)
+    self.actions[self.idx] = action.numpy()
+    self.rewards[self.idx] = reward
+    self.nonterminals[self.idx] = not done
+    self.idx = (self.idx + 1) % self.size
+    self.full = self.full or self.idx == 0
+
+  # Returns a single sequence chunk uniformly sampled from the memory
+  def _sample_one(self, L):
+    valid_idx = False
+    while not valid_idx:
+      idx = np.random.randint(0, self.size if self.full else self.idx - L)
+      idxs = np.arange(idx, idx + L) % self.size
+      valid_idx = not self.idx in idxs[1:]  # Make sure data does not cross the memory index
+    observations = self.observations[idxs].astype(np.float32)
+    if not self.symbolic_env:
+      observations = np.divide(observations, 255.)  # Undo discretisation for visual observations
+    return observations, self.actions[idxs], self.rewards[idxs], self.nonterminals[idxs]
+
+  # Returns a batch of sequence chunks uniformly sampled from the memory
+  def sample(self, n, L):
+    batch = [self._sample_one(L) for _ in range(n)]
+    return [torch.from_numpy(np.stack(item, axis=1)).to(device=self.device) for item in zip(*batch)]

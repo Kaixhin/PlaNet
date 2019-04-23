@@ -1,0 +1,10 @@
+name: planet
+channels:
+  - pytorch
+dependencies:
+  - pytorch
+  - seaborn
+  - tqdm
+  - pip:
+    - gym
+    - opencv-python
