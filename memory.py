@@ -10,7 +10,7 @@ class ExperienceReplay():
     self.observations = np.empty((size, observation_size) if symbolic_env else (size, 3, 64, 64), dtype=np.float32 if symbolic_env else np.uint8)
     self.actions = np.empty((size, action_size), dtype=np.float32)
     self.rewards = np.empty((size, ), dtype=np.float32) 
-    self.nonterminals = np.empty((size, ), dtype=np.float32)
+    self.nonterminals = np.empty((size, 1), dtype=np.float32)
     self.idx = 0
     self.full = False  # Tracks if memory has been filled/all slots are valid
 
@@ -25,7 +25,7 @@ class ExperienceReplay():
     self.idx = (self.idx + 1) % self.size
     self.full = self.full or self.idx == 0
 
-  # Returns a single sequence chunk uniformly sampled from the memory
+  # Returns a single sequence chunk uniformly sampled from the memory TODO Profile and possibly parallelise over all batches?
   def _sample_one(self, L):
     valid_idx = False
     while not valid_idx:

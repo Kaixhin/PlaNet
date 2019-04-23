@@ -8,9 +8,9 @@ from torch.distributions.kl import kl_divergence
 from torch.nn import functional as F
 from torchvision.utils import save_image
 from tqdm import tqdm
-from env import Env
+from env import CONTROL_SUITE_ENVS, Env, GYM_ENVS
 from memory import ExperienceReplay
-from models import Encoder, ObservationModel, RewardModel, TransitionModel
+from models import bottle, Encoder, ObservationModel, RewardModel, TransitionModel
 from planner import MPCPlanner
 from utils import plot
 
@@ -19,7 +19,7 @@ from utils import plot
 parser = argparse.ArgumentParser(description='PlaNet')
 parser.add_argument('--seed', type=int, default=1, metavar='S', help='Random seed')
 parser.add_argument('--disable-cuda', action='store_true', help='Disable CUDA')
-parser.add_argument('--env', type=str, default='Pendulum-v0', choices=['Pendulum-v0', 'MountainCarContinuous-v0', 'Ant-v2', 'HalfCheetah-v2', 'Hopper-v2', 'Walker2d-v2', 'Humanoid-v2', 'cartpole-balance', 'cartpole-swingup', 'finger-spin', 'cheetah-run', 'ball_in_cup-catch', 'walker-walk'], help='Gym/Control Suite environment')
+parser.add_argument('--env', type=str, default='Pendulum-v0', choices=GYM_ENVS + CONTROL_SUITE_ENVS, help='Gym/Control Suite environment')
 parser.add_argument('--symbolic-env', action='store_true', help='Symbolic features')
 parser.add_argument('--max-episode-length', type=int, default=1000, metavar='T', help='Max episode length')
 parser.add_argument('--experience-size', type=int, default=5000000, metavar='D', help='Experience replay size')  # TODO: Maybe increase size? Seems like the original just stores everything...
@@ -102,46 +102,25 @@ for episode in tqdm(range(args.seed_episodes + 1, args.episodes + 1), total=args
   # Model fitting
   for s in tqdm(range(args.collect_interval)):
     # Draw sequence chunks {(o_t, a_t, r_t+1, terminal_t+1)} ~ D uniformly at random from the dataset (including terminal flags)
-    observations, actions, rewards, nonterminals = D.sample(args.batch_size, args.chunk_size)  # Transitions start at time t = 1
-    # Create initial belief, state and action for time t = 0
-    belief, posterior_state, action = torch.zeros(args.batch_size, args.belief_size, device=args.device), torch.zeros(args.batch_size, args.state_size, device=args.device), torch.zeros(args.batch_size, env.action_size, device=args.device)
-    beliefs, prior_states, prior_means, prior_std_devs, posterior_states, posterior_means, posterior_std_devs = [belief], [None], [None], [None], [posterior_state], [None], [None]
-    # Compute loss L
-    observation_loss, reward_loss, kl_loss, global_kl_loss = 0, 0, 0, 0
-    for t in range(1, args.chunk_size + 1):
-      t_trans = t - 1  # Use t_trans to deal with different time indexing
-      # Update belief/state using posterior from previous belief/state, previous action and current observation
-      belief, prior_state, prior_mean, prior_std_dev, posterior_state, posterior_mean, posterior_std_dev = transition_model(posterior_states[t - 1], action, beliefs[t - 1], encoder(observations[t_trans]))
-      # Calculate observation likelihood, reward likelihood and KL losses (for t = 0 only for latent overshooting)
-      observation_loss += F.mse_loss(observation_model(belief, posterior_state), observations[t_trans], reduction='none').sum(dim=1 if args.symbolic_env else [1, 2, 3]).mean(dim=0)
-      reward_loss += F.mse_loss(reward_model(belief, posterior_state), rewards[t_trans])
-      kl_loss += args.overshooting_distance * torch.max(kl_divergence(Normal(posterior_mean, posterior_std_dev), Normal(prior_mean, prior_std_dev)).sum(dim=1), free_nats).mean(dim=0)
-      global_kl_loss += args.global_kl_beta * kl_divergence(Normal(posterior_mean, posterior_std_dev), global_prior).sum(dim=1).mean(dim=0)
-      # Reset belief/state (note that original assumes environment was non-episodic)
-      belief = nonterminals[t_trans].unsqueeze(dim=1) * belief
-      prior_state = nonterminals[t_trans].unsqueeze(dim=1) * prior_state
-      posterior_state = nonterminals[t_trans].unsqueeze(dim=1) * posterior_state
-      action = actions[t_trans]  # Get current action for use in next timestep
-      # Store beliefs/states
-      beliefs.append(belief)
-      prior_states.append(prior_state)
-      prior_means.append(prior_mean)
-      prior_std_devs.append(prior_std_dev)
-      posterior_states.append(posterior_state)
-      posterior_means.append(posterior_mean)
-      posterior_std_devs.append(posterior_std_dev)
-    if args.overshooting_kl_beta != 0:  # Calculate latent overshooting objective for t > 0
-      for t in range(2, args.chunk_size + 1):
-        belief, prior_state, action = beliefs[t - 1], prior_states[t - 1], actions[t - 2]
-        for d in range(t, min(t + args.overshooting_distance, args.chunk_size)):
-          t_trans = d - 1  # Use t_trans to deal with different time indexing
-          # Update belief/state using prior
-          belief, prior_state, prior_mean, prior_std_dev = transition_model(prior_state, action, belief)
-          # Calculate KL loss
-          kl_loss += args.overshooting_kl_beta * torch.max(kl_divergence(Normal(posterior_means[d].detach(), posterior_std_devs[d].detach()), Normal(prior_mean, prior_std_dev)).sum(dim=1), free_nats).mean(dim=0)
-          # Reset belief/state (note that original assumes environment was non-episodic)
-          prior_state = nonterminals[d].unsqueeze(dim=1) * prior_state
-          action = actions[t_trans]  # Get current action for use in next timestep
+    observations, actions, rewards, nonterminals = D.sample(args.batch_size, args.chunk_size + 1)  # Transitions start at time t = 0
+    # Create initial belief and state for time t = 0
+    init_belief, init_state = torch.zeros(args.batch_size, args.belief_size, device=args.device), torch.zeros(args.batch_size, args.state_size, device=args.device)
+    # Update belief/state using posterior from previous belief/state, previous action and current observation (over entire sequence at once)
+    beliefs, prior_states, prior_means, prior_std_devs, posterior_states, posterior_means, posterior_std_devs = transition_model(init_state, actions[:-1], init_belief, nonterminals[:-1], bottle(encoder, (observations[1:], )))
+    # Calculate observation likelihood, reward likelihood and KL losses (for t = 0 only for latent overshooting); sum over final dims, average over batch, sum over time
+    observation_loss = F.mse_loss(bottle(observation_model, (beliefs, posterior_states)), observations[1:], reduction='none').sum(dim=2 if args.symbolic_env else (2, 3, 4)).mean(dim=1).sum()
+    reward_loss = F.mse_loss(bottle(reward_model, (beliefs, posterior_states)), rewards[1:], reduction='none').mean(dim=1).sum()
+    kl_loss = args.overshooting_distance * torch.max(kl_divergence(Normal(posterior_means, posterior_std_devs), Normal(prior_means, prior_std_devs)).sum(dim=2), free_nats).mean(dim=1).sum()
+    global_kl_loss = args.global_kl_beta * kl_divergence(Normal(posterior_means, posterior_std_devs), global_prior).sum(dim=2).mean(dim=1).sum()
+    # Calculate latent overshooting objective for t > 0
+    if args.overshooting_kl_beta != 0:  
+      for t in range(1, args.chunk_size):  # TODO: See if this is worth parallelising too
+        d = min(t + args.overshooting_distance, args.chunk_size)  # Overshooting distance
+        t_, d_ = t - 1, d - 1 # Use t_ and d_ to deal with different time indexing for latent states
+        # Update belief/state using prior from previous belief/state and previous action (over entire sequence at once)
+        _, _, prior_means, prior_std_devs = transition_model(prior_states[t_], actions[t:d], beliefs[t_], nonterminals[t:d])
+        # Calculate and update KL loss
+        kl_loss += args.overshooting_kl_beta * torch.max(kl_divergence(Normal(posterior_means[t_ + 1:d_ + 1].detach(), posterior_std_devs[t_ + 1:d_ + 1].detach()), Normal(prior_means, prior_std_devs)).sum(dim=2), free_nats).mean(dim=1).sum()
     # Update model parameters
     optimiser.zero_grad()
     (observation_loss + reward_loss + kl_loss + global_kl_loss).backward()
@@ -168,7 +147,8 @@ for episode in tqdm(range(args.seed_episodes + 1, args.episodes + 1), total=args
     belief, posterior_state, action = torch.zeros(1, args.belief_size, device=args.device), torch.zeros(1, args.state_size, device=args.device), torch.zeros(1, env.action_size, device=args.device)
     for t in range(args.max_episode_length // args.action_repeat):
       # Infer belief over current state q(s_t|o≤t,a<t) from the history
-      belief, _, _, _, posterior_state, _, _ = transition_model(posterior_state, action, belief, encoder(observation.to(device=args.device)))
+      belief, _, _, _, posterior_state, _, _ = transition_model(posterior_state, action.unsqueeze(dim=0), belief, None, encoder(observation.to(device=args.device)).unsqueeze(dim=0))  # Action and observation have time dimension
+      belief, posterior_state = belief.squeeze(dim=0), posterior_state.squeeze(dim=0)  # Remove time dimension from belief/state
       action = planner(belief, posterior_state, transition_model, reward_model)  # action ← planner(q(s_t|o≤t,a<t), p)
       action = action + args.action_noise * torch.randn_like(action)  # Add exploration noise ε ~ p(ε) to the action
       next_observation, reward, done = env.step(action[0].cpu())  # Perform environment step (action repeats handled internally)

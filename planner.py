@@ -1,5 +1,6 @@
 import torch
 from torch.distributions import Normal
+from models import bottle
 
 
 # Model-predictive control planner with cross-entropy method and learned transition model
@@ -15,22 +16,16 @@ class MPCPlanner():
     # Initialize factorized belief over action sequences q(a_t:t+H) ← N(0, I)
     action_distribution = Normal(torch.zeros(self.planning_horizon, self.action_size, device=belief.device), torch.ones(self.planning_horizon, self.action_size, device=belief.device))
     for i in range(self.optimisation_iters):
-      # Evaluate J action sequences from the current belief (in batch)
-      beliefs, states = [belief], [state]
-      actions = action_distribution.sample([self.candidates]) # Sample actions
+      # Evaluate J action sequences from the current belief (over entire sequence at once, batched over particles)
+      actions = action_distribution.sample([self.candidates]).transpose(0, 1) # Sample actions (and flip to time x batch)
       # Sample next states
-      for t in range(self.planning_horizon):
-        next_belief, next_state, _, _ = transition_model(states[-1], actions[:, t], beliefs[-1])
-        beliefs.append(next_belief)
-        states.append(next_state)
-      # Calculate expected returns (batched over time x batch)
-      beliefs = torch.stack(beliefs[1:], dim=0).view(self.planning_horizon * self.candidates, -1)
-      states = torch.stack(states[1:], dim=0).view(self.planning_horizon * self.candidates, -1)
-      returns = reward_model(beliefs, states).view(self.planning_horizon, self.candidates).sum(dim=0)
+      beliefs, states, _, _ = transition_model(state, actions, belief)
+      # Calculate expected returns (technically sum of rewards over plannign horizon)
+      returns = bottle(reward_model, (beliefs, states)).sum(dim=0)
       # Re-fit belief to the K best action sequences
       _, topk = returns.topk(self.top_candidates, largest=True, sorted=False)  # K ← argsort({R(j)}
-      best_actions = actions[topk]
+      best_actions = actions[:, topk]
       # Update belief with new means and standard deviations
-      action_distribution = Normal(best_actions.mean(dim=0), best_actions.std(dim=0, unbiased=False))
+      action_distribution = Normal(best_actions.mean(dim=1), best_actions.std(dim=1, unbiased=False))
     # Return first action mean µ_t
     return action_distribution.mean[0].unsqueeze(dim=0)
