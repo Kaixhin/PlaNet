@@ -23,6 +23,7 @@ parser.add_argument('--env', type=str, default='Pendulum-v0', choices=GYM_ENVS +
 parser.add_argument('--symbolic-env', action='store_true', help='Symbolic features')
 parser.add_argument('--max-episode-length', type=int, default=1000, metavar='T', help='Max episode length')
 parser.add_argument('--experience-size', type=int, default=5000000, metavar='D', help='Experience replay size')  # TODO: Maybe increase size? Seems like the original just stores everything...
+parser.add_argument('--activation-function', type=str, default='relu', choices=dir(F), help='Model activation function')
 parser.add_argument('--embedding-size', type=int, default=1024, metavar='E', help='Observation embedding size')
 parser.add_argument('--hidden-size', type=int, default=200, metavar='H', help='Hidden size')
 parser.add_argument('--belief-size', type=int, default=200, metavar='H', help='Belief/hidden size')
@@ -80,10 +81,10 @@ for s in range(args.seed_episodes):
 
 
 # Initialise model parameters randomly
-transition_model = TransitionModel(args.belief_size, args.state_size, env.action_size, args.hidden_size, args.embedding_size).to(device=args.device)
-observation_model = ObservationModel(args.symbolic_env, env.observation_size, args.belief_size, args.state_size, args.embedding_size).to(device=args.device)
-reward_model = RewardModel(args.belief_size, args.state_size, args.hidden_size).to(device=args.device)
-encoder = Encoder(args.symbolic_env, env.observation_size, args.embedding_size).to(device=args.device)
+transition_model = TransitionModel(args.belief_size, args.state_size, env.action_size, args.hidden_size, args.embedding_size, args.activation_function).to(device=args.device)
+observation_model = ObservationModel(args.symbolic_env, env.observation_size, args.belief_size, args.state_size, args.embedding_size, args.activation_function).to(device=args.device)
+reward_model = RewardModel(args.belief_size, args.state_size, args.hidden_size, args.activation_function).to(device=args.device)
+encoder = Encoder(args.symbolic_env, env.observation_size, args.embedding_size, args.activation_function).to(device=args.device)
 param_list = list(transition_model.parameters()) + list(observation_model.parameters()) + list(reward_model.parameters()) + list(encoder.parameters())
 if args.load_checkpoint > 0:
   model_dicts = torch.load(os.path.join('checkpoints', 'models_%d.pth' % args.load_checkpoint))
@@ -145,7 +146,7 @@ for episode in tqdm(range(args.seed_episodes + 1, args.episodes + 1), total=args
   with torch.no_grad():
     observation, total_reward = env.reset(), 0
     belief, posterior_state, action = torch.zeros(1, args.belief_size, device=args.device), torch.zeros(1, args.state_size, device=args.device), torch.zeros(1, env.action_size, device=args.device)
-    for t in range(args.max_episode_length // args.action_repeat):
+    for t in tqdm(range(args.max_episode_length // args.action_repeat)):
       # Infer belief over current state q(s_t|o≤t,a<t) from the history
       belief, _, _, _, posterior_state, _, _ = transition_model(posterior_state, action.unsqueeze(dim=0), belief, None, encoder(observation.to(device=args.device)).unsqueeze(dim=0))  # Action and observation have time dimension
       belief, posterior_state = belief.squeeze(dim=0), posterior_state.squeeze(dim=0)  # Remove time dimension from belief/state

@@ -5,6 +5,8 @@ PlaNet
 
 PlaNet: A Deep Planning Network for Reinforcement Learning. Supports symbolic/visual observation spaces. Supports some Gym environments (including classic control/non-MuJoCo environments, so DeepMind Control Suite/MuJoCo are optional dependencies).
 
+Run with `python.main.py`. For best performance with DeepMind Control Suite, try setting environment variable `MUJOCO_GL=egl` (see instructions and details [here](https://github.com/deepmind/dm_control#rendering)).
+
 Requirements
 ------------
 

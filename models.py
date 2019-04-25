@@ -15,8 +15,9 @@ def bottle(f, x_tuple):
 
 
 class TransitionModel(nn.Module):
-  def __init__(self, belief_size, state_size, action_size, hidden_size, embedding_size, min_std_dev=1e-5):
+  def __init__(self, belief_size, state_size, action_size, hidden_size, embedding_size, activation_function='relu', min_std_dev=1e-5):
     super().__init__()
+    self.act_fn = getattr(F, activation_function)
     self.min_std_dev = min_std_dev
     self.fc_embed_state_action = nn.Linear(state_size + action_size, hidden_size)
     self.rnn = nn.GRUCell(hidden_size, hidden_size)
@@ -48,17 +49,17 @@ class TransitionModel(nn.Module):
       _state = prior_states[t] if observations is None else posterior_states[t]  # Select appropriate previous state
       _state = _state if nonterminals is None else _state * nonterminals[t]  # Mask if previous transition was terminal
       # Compute belief (deterministic hidden state)
-      hidden = F.elu(self.fc_embed_state_action(torch.cat([_state, actions[t]], dim=1)))
+      hidden = self.act_fn(self.fc_embed_state_action(torch.cat([_state, actions[t]], dim=1)))
       beliefs[t + 1] = self.rnn(hidden, beliefs[t])
       # Compute state prior by applying transition dynamics
-      hidden = F.elu(self.fc_embed_belief_prior(beliefs[t + 1]))
+      hidden = self.act_fn(self.fc_embed_belief_prior(beliefs[t + 1]))
       prior_means[t + 1], _prior_std_dev = torch.chunk(self.fc_state_prior(hidden), 2, dim=1)
       prior_std_devs[t + 1] = F.softplus(_prior_std_dev) + self.min_std_dev
       prior_states[t + 1] = prior_means[t + 1] + prior_std_devs[t + 1] * torch.randn_like(prior_means[t + 1])     
       if observations is not None:
         # Compute state posterior by applying transition dynamics and using current observation
         t_ = t - 1  # Use t_ to deal with different time indexing for observations
-        hidden = F.elu(self.fc_embed_belief_posterior(torch.cat([beliefs[t + 1], observations[t_ + 1]], dim=1)))
+        hidden = self.act_fn(self.fc_embed_belief_posterior(torch.cat([beliefs[t + 1], observations[t_ + 1]], dim=1)))
         posterior_means[t + 1], _posterior_std_dev = torch.chunk(self.fc_state_posterior(hidden), 2, dim=1)
         posterior_std_devs[t + 1] = F.softplus(_posterior_std_dev) + self.min_std_dev
         posterior_states[t + 1] = posterior_means[t + 1] + posterior_std_devs[t + 1] * torch.randn_like(posterior_means[t + 1])
@@ -69,22 +70,24 @@ class TransitionModel(nn.Module):
 
 
 class SymbolicObservationModel(nn.Module):
-  def __init__(self, observation_size, belief_size, state_size, embedding_size):
+  def __init__(self, observation_size, belief_size, state_size, embedding_size, activation_function='relu'):
     super().__init__()
+    self.act_fn = getattr(F, activation_function)
     self.fc1 = nn.Linear(belief_size + state_size, embedding_size)
     self.fc2 = nn.Linear(embedding_size, embedding_size)
     self.fc3 = nn.Linear(embedding_size, observation_size)
 
   def forward(self, belief, state):
-    hidden = F.elu(self.fc1(torch.cat([belief, state], dim=1)))
-    hidden = F.elu(self.fc2(hidden))
+    hidden = self.act_fn(self.fc1(torch.cat([belief, state], dim=1)))
+    hidden = self.act_fn(self.fc2(hidden))
     observation = self.fc3(hidden)
     return observation
 
 
 class VisualObservationModel(nn.Module):
-  def __init__(self, belief_size, state_size, embedding_size):
+  def __init__(self, belief_size, state_size, embedding_size, activation_function='relu'):
     super().__init__()
+    self.act_fn = getattr(F, activation_function)
     self.embedding_size = embedding_size
     self.fc1 = nn.Linear(belief_size + state_size, embedding_size)
     self.conv1 = nn.ConvTranspose2d(embedding_size, 128, 5, stride=2)
@@ -95,51 +98,54 @@ class VisualObservationModel(nn.Module):
   def forward(self, belief, state):
     hidden = self.fc1(torch.cat([belief, state], dim=1))  # No nonlinearity here
     hidden = hidden.view(-1, self.embedding_size, 1, 1)
-    hidden = F.elu(self.conv1(hidden))
-    hidden = F.elu(self.conv2(hidden))
-    hidden = F.elu(self.conv3(hidden))
+    hidden = self.act_fn(self.conv1(hidden))
+    hidden = self.act_fn(self.conv2(hidden))
+    hidden = self.act_fn(self.conv3(hidden))
     observation = self.conv4(hidden)
     return observation
 
 
-def ObservationModel(symbolic, observation_size, belief_size, state_size, embedding_size):
+def ObservationModel(symbolic, observation_size, belief_size, state_size, embedding_size, activation_function='relu'):
   if symbolic:
-    return SymbolicObservationModel(observation_size, belief_size, state_size, embedding_size)
+    return SymbolicObservationModel(observation_size, belief_size, state_size, embedding_size, activation_function)
   else:
-    return VisualObservationModel(belief_size, state_size, embedding_size)
+    return VisualObservationModel(belief_size, state_size, embedding_size, activation_function)
 
 
 class RewardModel(nn.Module):
-  def __init__(self, belief_size, state_size, hidden_size):
+  def __init__(self, belief_size, state_size, hidden_size, activation_function='relu'):
     super().__init__()
+    self.act_fn = getattr(F, activation_function)
     self.fc1 = nn.Linear(belief_size + state_size, hidden_size)
     self.fc2 = nn.Linear(hidden_size, hidden_size)
     self.fc3 = nn.Linear(hidden_size, 1)
 
   def forward(self, belief, state):
-    hidden = F.elu(self.fc1(torch.cat([belief, state], dim=1)))
-    hidden = F.elu(self.fc2(hidden))
+    hidden = self.act_fn(self.fc1(torch.cat([belief, state], dim=1)))
+    hidden = self.act_fn(self.fc2(hidden))
     reward = self.fc3(hidden).squeeze(dim=1)
     return reward
 
 
 class SymbolicEncoder(nn.Module):
-  def __init__(self, observation_size, embedding_size):
+  def __init__(self, observation_size, embedding_size, activation_function='relu'):
     super().__init__()
+    self.act_fn = getattr(F, activation_function)
     self.fc1 = nn.Linear(observation_size, embedding_size)
     self.fc2 = nn.Linear(embedding_size, embedding_size)
     self.fc3 = nn.Linear(embedding_size, embedding_size)
 
   def forward(self, observation):
-    hidden = F.elu(self.fc1(observation))
-    hidden = F.elu(self.fc2(hidden))
+    hidden = self.act_fn(self.fc1(observation))
+    hidden = self.act_fn(self.fc2(hidden))
     hidden = self.fc3(hidden)
     return hidden
 
 
 class VisualEncoder(nn.Module):
-  def __init__(self, embedding_size):
+  def __init__(self, embedding_size, activation_function='relu'):
     super().__init__()
+    self.act_fn = getattr(F, activation_function)
     self.embedding_size = embedding_size
     self.conv1 = nn.Conv2d(3, 32, 4, stride=2)
     self.conv2 = nn.Conv2d(32, 64, 4, stride=2)
@@ -147,16 +153,16 @@ class VisualEncoder(nn.Module):
     self.conv4 = nn.Conv2d(128, 256, 4, stride=2)
 
   def forward(self, observation):
-    hidden = F.elu(self.conv1(observation))
-    hidden = F.elu(self.conv2(hidden))
-    hidden = F.elu(self.conv3(hidden))
-    hidden = F.elu(self.conv4(hidden))
+    hidden = self.act_fn(self.conv1(observation))
+    hidden = self.act_fn(self.conv2(hidden))
+    hidden = self.act_fn(self.conv3(hidden))
+    hidden = self.act_fn(self.conv4(hidden))
     hidden = hidden.view(-1, self.embedding_size)
     return hidden
 
 
-def Encoder(symbolic, observation_size, embedding_size):
+def Encoder(symbolic, observation_size, embedding_size, activation_function='relu'):
   if symbolic:
-    return SymbolicEncoder(observation_size, embedding_size)
+    return SymbolicEncoder(observation_size, embedding_size, activation_function)
   else:
-    return VisualEncoder(embedding_size)
+    return VisualEncoder(embedding_size, activation_function)
