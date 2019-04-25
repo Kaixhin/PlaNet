@@ -1,10 +1,38 @@
 import os
-from matplotlib import pyplot as plt
-import seaborn as sns
+import cv2
+import numpy as np
+import plotly
+from plotly.graph_objs import Scatter
+from plotly.graph_objs.scatter import Line
 
 
-def plot(metrics, key):
-  fig, ax = plt.subplots()
-  ax = sns.lineplot(x=metrics['episodes'], y=metrics[key], ax=ax)
-  fig.savefig(os.path.join('results', key + '.png'))
-  plt.close(fig)
+# Plots min, max and mean + standard deviation bars of a population over time
+def plot(xs, ys_population, title, path=''):
+  max_colour, mean_colour, std_colour, transparent = 'rgb(0, 132, 180)', 'rgb(0, 172, 237)', 'rgba(29, 202, 255, 0.2)', 'rgba(0, 0, 0, 0)'
+
+  if isinstance(ys_population[0], list):
+    ys = np.asarray(ys_population, dtype=np.float32)
+    ys_min, ys_max, ys_mean, ys_std = ys.min(1), ys.max(1), ys.mean(1), ys.std(1)
+    ys_upper, ys_lower = ys_mean + ys_std, ys_mean - ys_std
+
+    trace_max = Scatter(x=xs, y=ys_max, line=Line(color=max_colour, dash='dash'), name='Max')
+    trace_upper = Scatter(x=xs, y=ys_upper, line=Line(color=transparent), name='+1 Std. Dev.', showlegend=False)
+    trace_mean = Scatter(x=xs, y=ys_mean, fill='tonexty', fillcolor=std_colour, line=Line(color=mean_colour), name='Mean')
+    trace_lower = Scatter(x=xs, y=ys_lower, fill='tonexty', fillcolor=std_colour, line=Line(color=transparent), name='-1 Std. Dev.', showlegend=False)
+    trace_min = Scatter(x=xs, y=ys_min, line=Line(color=max_colour, dash='dash'), name='Min')
+    data = [trace_upper, trace_mean, trace_lower, trace_min, trace_max]
+  else:
+    data = [Scatter(x=xs, y=ys_population, line=Line(color=mean_colour))]
+  plotly.offline.plot({
+    'data': data,
+    'layout': dict(title=title, xaxis={'title': 'Step'}, yaxis={'title': title})
+  }, filename=os.path.join(path, title + '.html'), auto_open=False)
+
+
+def write_video(frames, title, path=''):
+  frames = np.multiply(np.stack(frames, axis=0).transpose(0, 2, 3, 1), 255).astype(np.uint8)[:, :, :, ::-1]  # VideoWrite expects H x W x C in BGR
+  _, H, W, _ = frames.shape
+  writer = cv2.VideoWriter(os.path.join(path, '%s.mp4' % title), cv2.VideoWriter_fourcc(*'mp4v'), 30., (W, H), True)
+  for frame in frames:
+    writer.write(frame)
+  writer.release()

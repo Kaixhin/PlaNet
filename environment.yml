@@ -2,8 +2,8 @@ name: planet
 channels:
   - pytorch
 dependencies:
+  - plotly
   - pytorch
-  - seaborn
   - tqdm
   - pip:
     - gym

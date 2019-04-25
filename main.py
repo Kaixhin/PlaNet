@@ -12,7 +12,7 @@ from env import CONTROL_SUITE_ENVS, Env, GYM_ENVS
 from memory import ExperienceReplay
 from models import bottle, Encoder, ObservationModel, RewardModel, TransitionModel
 from planner import MPCPlanner
-from utils import plot
+from utils import plot, write_video
 
 
 # Hyperparameters
@@ -45,6 +45,8 @@ parser.add_argument('--planning-horizon', type=int, default=12, metavar='H', hel
 parser.add_argument('--optimisation-iters', type=int, default=10, metavar='I', help='Planning optimisation iterations')
 parser.add_argument('--candidates', type=int, default=1000, metavar='J', help='Candidate samples per iteration')
 parser.add_argument('--top-candidates', type=int, default=100, metavar='K', help='Number of top candidates to fit')
+parser.add_argument('--test-interval', type=int, default=25, metavar='I', help='Test interval (episodes)')
+parser.add_argument('--test-episodes', type=int, default=10, metavar='E', help='Number of test episodes')
 parser.add_argument('--checkpoint-interval', type=int, default=25, metavar='I', help='Checkpoint interval (episodes)')
 parser.add_argument('--checkpoint-experience', action='store_true', help='Checkpoint experience replay')
 parser.add_argument('--load-experience', action='store_true', help='Load experience replay (from checkpoint dir)')
@@ -101,7 +103,7 @@ global_prior = Normal(torch.zeros(args.batch_size, args.state_size, device=args.
 free_nats = torch.full((1, ), args.free_nats, device=args.device)  # Allowed deviation in KL divergence
 
 
-metrics = {'episodes': [], 'rewards': [], 'observation_loss': [], 'reward_loss': [], 'kl_loss': [], 'global_kl_loss': []}
+metrics = {'episodes': [], 'test_episodes': [], 'rewards': [], 'observation_loss': [], 'reward_loss': [], 'kl_loss': [], 'global_kl_loss': []}
 for episode in tqdm(range(args.seed_episodes + 1, args.episodes + 1), total=args.episodes, initial=args.seed_episodes + 1):
   metrics['episodes'].append(episode)
   # Model fitting
@@ -141,36 +143,57 @@ for episode in tqdm(range(args.seed_episodes + 1, args.episodes + 1), total=args
   metrics['reward_loss'] = metrics['reward_loss'][:-args.collect_interval] + [sum(metrics['reward_loss'][-args.collect_interval:]) / args.collect_interval]
   metrics['kl_loss'] = metrics['kl_loss'][:-args.collect_interval] + [sum(metrics['kl_loss'][-args.collect_interval:]) / args.collect_interval]
   metrics['global_kl_loss'] = metrics['global_kl_loss'][:-args.collect_interval] + [sum(metrics['global_kl_loss'][-args.collect_interval:]) / args.collect_interval]
-  plot(metrics, 'observation_loss')
-  plot(metrics, 'reward_loss')
-  plot(metrics, 'kl_loss')
-  plot(metrics, 'global_kl_loss')
+  plot(metrics['episodes'], metrics['observation_loss'], 'observation_loss', 'results')
+  plot(metrics['episodes'], metrics['reward_loss'], 'reward_loss', 'results')
+  plot(metrics['episodes'], metrics['kl_loss'], 'kl_loss', 'results')
+  plot(metrics['episodes'], metrics['global_kl_loss'], 'global_kl_loss', 'results')
   
   # Data collection
   with torch.no_grad():
-    observation, total_reward = env.reset(), 0
+    observation = env.reset()
     belief, posterior_state, action = torch.zeros(1, args.belief_size, device=args.device), torch.zeros(1, args.state_size, device=args.device), torch.zeros(1, env.action_size, device=args.device)
-    for t in tqdm(range(args.max_episode_length // args.action_repeat)):
+    for t in tqdm(range(args.max_episode_length // args.action_repeat)):  # TODO: Test tqdm with loop breaks
       # Infer belief over current state q(s_t|o≤t,a<t) from the history
       belief, _, _, _, posterior_state, _, _ = transition_model(posterior_state, action.unsqueeze(dim=0), belief, None, encoder(observation.to(device=args.device)).unsqueeze(dim=0))  # Action and observation have time dimension
       belief, posterior_state = belief.squeeze(dim=0), posterior_state.squeeze(dim=0)  # Remove time dimension from belief/state
       action = planner(belief, posterior_state, transition_model, reward_model)  # action ← planner(q(s_t|o≤t,a<t), p)
       action = action + args.action_noise * torch.randn_like(action)  # Add exploration noise ε ~ p(ε) to the action
       next_observation, reward, done = env.step(action[0].cpu())  # Perform environment step (action repeats handled internally)
-      total_reward += reward
       D.append(observation, action.cpu(), reward, done)
-      if not args.symbolic_env:
-        save_image(torch.cat([observation, observation_model(belief, posterior_state).cpu()]), os.path.join('results', 'obs_pred_%s.png' % str(t * args.action_repeat).zfill(len(str(args.max_episode_length)))))  # Save predicted observation via posterior
       observation = next_observation
-      if args.render:
-        env.render()
       if done:
         break
-  # Update and plot reward metrics
-  metrics['rewards'].append(total_reward)
-  plot(metrics, 'rewards')
-  # Save metrics
-  torch.save(metrics, os.path.join('results', 'metrics.pth'))
+  
+  # Test model
+  if episode % args.test_interval == 0:
+    with torch.no_grad():
+      total_rewards, video_frames = [], []
+      for test_episode in range(args.test_episodes):
+        observation, total_reward = env.reset(), 0
+        belief, posterior_state, action = torch.zeros(1, args.belief_size, device=args.device), torch.zeros(1, args.state_size, device=args.device), torch.zeros(1, env.action_size, device=args.device)
+        for t in range(args.max_episode_length // args.action_repeat):
+          # Infer belief over current state q(s_t|o≤t,a<t) from the history
+          belief, _, _, _, posterior_state, _, _ = transition_model(posterior_state, action.unsqueeze(dim=0), belief, None, encoder(observation.to(device=args.device)).unsqueeze(dim=0))  # Action and observation have time dimension
+          belief, posterior_state = belief.squeeze(dim=0), posterior_state.squeeze(dim=0)  # Remove time dimension from belief/state
+          action = planner(belief, posterior_state, transition_model, reward_model)  # action ← planner(q(s_t|o≤t,a<t), p)
+          next_observation, reward, done = env.step(action[0].cpu())  # Perform environment step (action repeats handled internally)
+          total_reward += reward
+          if test_episode == 0 and not args.symbolic_env:  # For first episode collect real vs. predicted frames for video
+            video_frames.append(torch.cat([observation[0], observation_model(belief, posterior_state).cpu()[0]], dim=2).numpy())
+          observation = next_observation
+          if args.render:
+            env.render()
+          if done:
+            break
+        total_rewards.append(total_reward)
+    # Update and plot reward metrics (and write video if applicable)
+    metrics['test_episodes'].append(episode)
+    metrics['rewards'].append(total_rewards)
+    plot(metrics['test_episodes'], metrics['rewards'], 'rewards', 'results')
+    if not args.symbolic_env:
+      write_video(video_frames, 'test_episode_%s' % str(episode).zfill(len(str(args.episodes))), 'results')
+    # Save metrics
+    torch.save(metrics, os.path.join('results', 'metrics.pth'))
 
   # Checkpoint models
   if episode % args.checkpoint_interval == 0:
