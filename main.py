@@ -46,6 +46,8 @@ parser.add_argument('--optimisation-iters', type=int, default=10, metavar='I', h
 parser.add_argument('--candidates', type=int, default=1000, metavar='J', help='Candidate samples per iteration')
 parser.add_argument('--top-candidates', type=int, default=100, metavar='K', help='Number of top candidates to fit')
 parser.add_argument('--checkpoint-interval', type=int, default=25, metavar='I', help='Checkpoint interval (episodes)')
+parser.add_argument('--checkpoint-experience', action='store_true', help='Checkpoint experience replay')
+parser.add_argument('--load-experience', action='store_true', help='Load experience replay (from checkpoint dir)')
 parser.add_argument('--load-checkpoint', type=int, default=0, metavar='E', help='Load model checkpoint (from given episode)')
 parser.add_argument('--render', action='store_true', help='Render environment')
 args = parser.parse_args()
@@ -64,20 +66,21 @@ else:
   args.device = torch.device('cpu')
 os.makedirs('results', exist_ok=True)
 os.makedirs('checkpoints', exist_ok=True)
-# Initialise environment, experience replay memory and planner
+# Initialise environment, planner and experience replay memory
 env = Env(args.env, args.symbolic_env, args.seed, args.max_episode_length, args.action_repeat)
-D = ExperienceReplay(args.experience_size, args.symbolic_env, env.observation_size, env.action_size, args.device)
 planner = MPCPlanner(env.action_size, args.planning_horizon, args.optimisation_iters, args.candidates, args.top_candidates)
-
-
-# Initialise dataset D with S random seed episodes
-for s in range(args.seed_episodes):
-  observation, done = env.reset(), False
-  while not done:
-    action = env.sample_random_action()
-    next_observation, reward, done = env.step(action)
-    D.append(observation, action, reward, done)
-    observation = next_observation
+if args.load_experience:
+  D = torch.load(os.path.join('checkpoints', 'experience.pth'))
+else:
+  D = ExperienceReplay(args.experience_size, args.symbolic_env, env.observation_size, env.action_size, args.device)
+  # Initialise dataset D with S random seed episodes
+  for s in range(args.seed_episodes):
+    observation, done = env.reset(), False
+    while not done:
+      action = env.sample_random_action()
+      next_observation, reward, done = env.step(action)
+      D.append(observation, action, reward, done)
+      observation = next_observation
 
 
 # Initialise model parameters randomly
@@ -86,13 +89,14 @@ observation_model = ObservationModel(args.symbolic_env, env.observation_size, ar
 reward_model = RewardModel(args.belief_size, args.state_size, args.hidden_size, args.activation_function).to(device=args.device)
 encoder = Encoder(args.symbolic_env, env.observation_size, args.embedding_size, args.activation_function).to(device=args.device)
 param_list = list(transition_model.parameters()) + list(observation_model.parameters()) + list(reward_model.parameters()) + list(encoder.parameters())
+optimiser = optim.Adam(param_list, lr=args.learning_rate, eps=1e-4)
 if args.load_checkpoint > 0:
   model_dicts = torch.load(os.path.join('checkpoints', 'models_%d.pth' % args.load_checkpoint))
   transition_model.load_state_dict(model_dicts['transition_model'])
   observation_model.load_state_dict(model_dicts['observation_model'])
   reward_model.load_state_dict(model_dicts['reward_model'])
   encoder.load_state_dict(model_dicts['encoder'])
-optimiser = optim.Adam(param_list, lr=args.learning_rate, eps=1e-4)
+  optimiser.load_state_dict(model_dicts['optimiser'])
 global_prior = Normal(torch.zeros(args.batch_size, args.state_size, device=args.device), torch.ones(args.batch_size, args.state_size, device=args.device))  # Global prior N(0, I)
 free_nats = torch.full((1, ), args.free_nats, device=args.device)  # Allowed deviation in KL divergence
 
@@ -170,6 +174,8 @@ for episode in tqdm(range(args.seed_episodes + 1, args.episodes + 1), total=args
 
   # Checkpoint models
   if episode % args.checkpoint_interval == 0:
-    torch.save({'transition_model': transition_model.state_dict(), 'observation_model': observation_model.state_dict(), 'reward_model': reward_model.state_dict(), 'encoder': encoder.state_dict()}, os.path.join('checkpoints', 'models_%d.pth' % episode))
+    torch.save({'transition_model': transition_model.state_dict(), 'observation_model': observation_model.state_dict(), 'reward_model': reward_model.state_dict(), 'encoder': encoder.state_dict(), 'optimiser': optimiser.state_dict()}, os.path.join('checkpoints', 'models_%d.pth' % episode))
+    if args.checkpoint_experience:
+      torch.save(D, os.path.join('checkpoints', 'experience.pth'))  # Warning: will fail with MemoryError with large memory sizes
 
 env.close()

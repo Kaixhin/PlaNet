@@ -10,6 +10,7 @@ Run with `python.main.py`. For best performance with DeepMind Control Suite, try
 Requirements
 ------------
 
+- Python 3
 - [DeepMind Control Suite](https://github.com/deepmind/dm_control)
 - [Gym](https://gym.openai.com/)
 - [OpenCV Python](https://pypi.python.org/pypi/opencv-python)
