@@ -26,17 +26,17 @@ class TransitionModel(nn.Module):
     self.fc_embed_belief_posterior = nn.Linear(hidden_size + embedding_size, hidden_size)
     self.fc_state_posterior = nn.Linear(hidden_size, 2 * state_size)
 
-  # Operates over (previous) state, (previous) action, (previous) belief, nonterminal (mask), and (current) observation
-  # Diagram of expected inputs and outputs for T = 5 (x- signifying beginning of output belief/state that gets sliced off):
-  # t : 0 1 2 3 4 5
-  # o :   X-X-X-X-X-
-  # a : X-X-X-X-X-
-  # d : X-X-X-X-X-
-  # b0: X-
-  # s0: X-
-  # b : x-X-X-X-X-X-
-  # s : x-X-X-X-X-X-
-  def forward(self, prev_state, actions, prev_belief, nonterminals=None, observations=None):
+  # Operates over (previous) state, (previous) actions, (previous) belief, (previous) nonterminals (mask), and (current) observations
+  # Diagram of expected inputs and outputs for T = 5 (-x- signifying beginning of output belief/state that gets sliced off):
+  # t :  0  1  2  3  4  5
+  # o :    -X--X--X--X--X-
+  # a : -X--X--X--X--X-
+  # n : -X--X--X--X--X-
+  # pb: -X-
+  # ps: -X-
+  # b : -x--X--X--X--X--X-
+  # s : -x--X--X--X--X--X-
+  def forward(self, prev_state, actions, prev_belief, observations=None, nonterminals=None):
     # Create lists for hidden states (cannot use single tensor as buffer because autograd won't work with inplace writes)
     T = actions.size(0) + 1
     beliefs, prior_states, prior_means, prior_std_devs = [None] * T, [None] * T, [None] * T, [None] * T
@@ -63,7 +63,7 @@ class TransitionModel(nn.Module):
         posterior_means[t + 1], _posterior_std_dev = torch.chunk(self.fc_state_posterior(hidden), 2, dim=1)
         posterior_std_devs[t + 1] = F.softplus(_posterior_std_dev) + self.min_std_dev
         posterior_states[t + 1] = posterior_means[t + 1] + posterior_std_devs[t + 1] * torch.randn_like(posterior_means[t + 1])
-    if observations is None:  # Return hidden states without initial hidden states
+    if observations is None:  # Return new hidden states
       return map(torch.stack, [beliefs[1:], prior_states[1:], prior_means[1:], prior_std_devs[1:]])
     else:
       return map(torch.stack, [beliefs[1:], prior_states[1:], prior_means[1:], prior_std_devs[1:], posterior_states[1:], posterior_means[1:], posterior_std_devs[1:]])

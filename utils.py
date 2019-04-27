@@ -7,10 +7,10 @@ from plotly.graph_objs.scatter import Line
 
 
 # Plots min, max and mean + standard deviation bars of a population over time
-def plot(xs, ys_population, title, path=''):
+def lineplot(xs, ys_population, title, path=''):
   max_colour, mean_colour, std_colour, transparent = 'rgb(0, 132, 180)', 'rgb(0, 172, 237)', 'rgba(29, 202, 255, 0.2)', 'rgba(0, 0, 0, 0)'
 
-  if isinstance(ys_population[0], list):
+  if isinstance(ys_population[0], list) or isinstance(ys_population[0], tuple):
     ys = np.asarray(ys_population, dtype=np.float32)
     ys_min, ys_max, ys_mean, ys_std = ys.min(1), ys.max(1), ys.mean(1), ys.std(1)
     ys_upper, ys_lower = ys_mean + ys_std, ys_mean - ys_std
