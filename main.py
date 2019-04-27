@@ -37,7 +37,7 @@ parser.add_argument('--batch-size', type=int, default=50, metavar='B', help='Bat
 parser.add_argument('--chunk-size', type=int, default=50, metavar='L', help='Chunk size')
 parser.add_argument('--overshooting-distance', type=int, default=50, metavar='D', help='Latent overshooting distance/latent overshooting weight for t = 1')
 parser.add_argument('--overshooting-kl-beta', type=float, default=1, metavar='β>1', help='Latent overshooting KL weight for t > 1 (0 to disable)')
-parser.add_argument('--global-kl-beta', type=float, default=0.1, metavar='βg', help='Global KL weight')
+parser.add_argument('--global-kl-beta', type=float, default=0.1, metavar='βg', help='Global KL weight (0 to disable)')
 parser.add_argument('--free-nats', type=float, default=2, metavar='F', help='Free nats')
 parser.add_argument('--learning-rate', type=float, default=1e-3, metavar='α', help='Learning rate')
 parser.add_argument('--grad-clip-norm', type=float, default=1000, metavar='C', help='Gradient clipping norm')
@@ -114,7 +114,7 @@ def update_belief_and_act(args, env, planner, transition_model, encoder, reward_
   return belief, posterior_state, action, next_observation, reward, done
 
 
-metrics = {'episodes': [], 'test_episodes': [], 'rewards': [], 'observation_loss': [], 'reward_loss': [], 'kl_loss': [], 'global_kl_loss': []}
+metrics = {'episodes': [], 'test_episodes': [], 'rewards': [], 'observation_loss': [], 'reward_loss': [], 'kl_loss': []}
 for episode in tqdm(range(args.seed_episodes + 1, args.episodes + 1), total=args.episodes, initial=args.seed_episodes + 1):
   metrics['episodes'].append(episode)
   losses = []
@@ -130,7 +130,8 @@ for episode in tqdm(range(args.seed_episodes + 1, args.episodes + 1), total=args
     observation_loss = F.mse_loss(bottle(observation_model, (beliefs, posterior_states)), observations[1:], reduction='none').sum(dim=2 if args.symbolic_env else (2, 3, 4)).mean(dim=1).sum()
     reward_loss = F.mse_loss(bottle(reward_model, (beliefs, posterior_states)), rewards[:-1], reduction='none').mean(dim=1).sum()
     kl_loss = args.overshooting_distance * torch.max(kl_divergence(Normal(posterior_means, posterior_std_devs), Normal(prior_means, prior_std_devs)).sum(dim=2), free_nats).mean(dim=1).sum()
-    global_kl_loss = args.global_kl_beta * kl_divergence(Normal(posterior_means, posterior_std_devs), global_prior).sum(dim=2).mean(dim=1).sum()
+    if args.global_kl_beta != 0:
+      kl_loss += args.global_kl_beta * kl_divergence(Normal(posterior_means, posterior_std_devs), global_prior).sum(dim=2).mean(dim=1).sum()
     # Calculate latent overshooting objective for t > 0
     if args.overshooting_kl_beta != 0:  
       for t in range(1, args.chunk_size):  # TODO: See if this is worth parallelising too
@@ -142,21 +143,19 @@ for episode in tqdm(range(args.seed_episodes + 1, args.episodes + 1), total=args
         kl_loss += args.overshooting_kl_beta * torch.max(kl_divergence(Normal(posterior_means[t_ + 1:d_ + 1].detach(), posterior_std_devs[t_ + 1:d_ + 1].detach()), Normal(prior_means, prior_std_devs)).sum(dim=2), free_nats).mean(dim=1).sum()
     # Update model parameters
     optimiser.zero_grad()
-    (observation_loss + reward_loss + kl_loss + global_kl_loss).backward()
+    (observation_loss + reward_loss + kl_loss).backward()
     nn.utils.clip_grad_norm_(param_list, args.grad_clip_norm, norm_type=2)
     optimiser.step()
     # Update loss metrics
-    losses.append([observation_loss.item(), reward_loss.item(), kl_loss.item(), global_kl_loss.item()])
+    losses.append([observation_loss.item(), reward_loss.item(), kl_loss.item()])
   # Update and plot loss metrics
   losses = tuple(zip(*losses))
   metrics['observation_loss'].append(losses[0])
   metrics['reward_loss'].append(losses[1])
   metrics['kl_loss'].append(losses[2])
-  metrics['global_kl_loss'].append(losses[3])
   lineplot(metrics['episodes'], metrics['observation_loss'], 'observation_loss', 'results')
   lineplot(metrics['episodes'], metrics['reward_loss'], 'reward_loss', 'results')
   lineplot(metrics['episodes'], metrics['kl_loss'], 'kl_loss', 'results')
-  lineplot(metrics['episodes'], metrics['global_kl_loss'], 'global_kl_loss', 'results')
   
   # Data collection
   with torch.no_grad():
@@ -175,7 +174,7 @@ for episode in tqdm(range(args.seed_episodes + 1, args.episodes + 1), total=args
   if episode % args.test_interval == 0:
     with torch.no_grad():
       total_rewards, video_frames = [], []
-      for test_episode in range(args.test_episodes):
+      for test_episode in tqdm(range(args.test_episodes)):
         observation, total_reward = env.reset(), 0
         belief, posterior_state, action = torch.zeros(1, args.belief_size, device=args.device), torch.zeros(1, args.state_size, device=args.device), torch.zeros(1, env.action_size, device=args.device)
         for t in range(args.max_episode_length // args.action_repeat):
