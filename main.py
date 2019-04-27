@@ -68,21 +68,26 @@ else:
   args.device = torch.device('cpu')
 os.makedirs('results', exist_ok=True)
 os.makedirs('checkpoints', exist_ok=True)
+metrics = {'steps': [], 'episodes': [], 'test_episodes': [], 'rewards': [], 'observation_loss': [], 'reward_loss': [], 'kl_loss': []}
 # Initialise environment, planner and experience replay memory
 env = Env(args.env, args.symbolic_env, args.seed, args.max_episode_length, args.action_repeat)
 planner = MPCPlanner(env.action_size, args.planning_horizon, args.optimisation_iters, args.candidates, args.top_candidates)
 if args.load_experience:
   D = torch.load(os.path.join('checkpoints', 'experience.pth'))
+  metrics['steps'], metrics['episodes'] = [D.steps] * D.episodes, list(range(1, D.episodes + 1))
 else:
   D = ExperienceReplay(args.experience_size, args.symbolic_env, env.observation_size, env.action_size, args.device)
   # Initialise dataset D with S random seed episodes
-  for s in range(args.seed_episodes):
-    observation, done = env.reset(), False
+  for s in range(1, args.seed_episodes + 1):
+    observation, done, t = env.reset(), False, 0
     while not done:
       action = env.sample_random_action()
       next_observation, reward, done = env.step(action)
       D.append(observation, action, reward, done)
       observation = next_observation
+      t += 1
+    metrics['steps'].append(t * args.action_repeat + (0 if len(metrics['steps']) == 0 else metrics['steps'][-1]))
+    metrics['episodes'].append(s)
 
 
 # Initialise model parameters randomly
@@ -105,7 +110,7 @@ free_nats = torch.full((1, ), args.free_nats, device=args.device)  # Allowed dev
 
 def update_belief_and_act(args, env, planner, transition_model, encoder, reward_model, belief, posterior_state, action, observation, test):
   # Infer belief over current state q(s_t|o≤t,a<t) from the history
-  belief, _, _, _, posterior_state, _, _ = transition_model(posterior_state, action.unsqueeze(dim=0), belief, encoder(observation.to(device=args.device)).unsqueeze(dim=0))  # Action and observation need extra time dimension
+  belief, _, _, _, posterior_state, _, _ = transition_model(posterior_state, action.unsqueeze(dim=0), belief, encoder(observation).unsqueeze(dim=0))  # Action and observation need extra time dimension
   belief, posterior_state = belief.squeeze(dim=0), posterior_state.squeeze(dim=0)  # Remove time dimension from belief/state
   action = planner(belief, posterior_state, transition_model, reward_model)  # action ← planner(q(s_t|o≤t,a<t), p)
   if not test:
@@ -114,9 +119,7 @@ def update_belief_and_act(args, env, planner, transition_model, encoder, reward_
   return belief, posterior_state, action, next_observation, reward, done
 
 
-metrics = {'episodes': [], 'test_episodes': [], 'rewards': [], 'observation_loss': [], 'reward_loss': [], 'kl_loss': []}
-for episode in tqdm(range(args.seed_episodes + 1, args.episodes + 1), total=args.episodes, initial=args.seed_episodes + 1):
-  metrics['episodes'].append(episode)
+for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total=args.episodes, initial=metrics['episodes'][-1] + 1):
   losses = []
   # Model fitting
   for s in tqdm(range(args.collect_interval)):
@@ -129,7 +132,7 @@ for episode in tqdm(range(args.seed_episodes + 1, args.episodes + 1), total=args
     # Calculate observation likelihood, reward likelihood and KL losses (for t = 0 only for latent overshooting); sum over final dims, average over batch, sum over time
     observation_loss = F.mse_loss(bottle(observation_model, (beliefs, posterior_states)), observations[1:], reduction='none').sum(dim=2 if args.symbolic_env else (2, 3, 4)).mean(dim=1).sum()
     reward_loss = F.mse_loss(bottle(reward_model, (beliefs, posterior_states)), rewards[:-1], reduction='none').mean(dim=1).sum()
-    kl_loss = args.overshooting_distance * torch.max(kl_divergence(Normal(posterior_means, posterior_std_devs), Normal(prior_means, prior_std_devs)).sum(dim=2), free_nats).mean(dim=1).sum()
+    kl_loss = args.overshooting_distance * torch.max(kl_divergence(Normal(posterior_means, posterior_std_devs), Normal(prior_means, prior_std_devs)), free_nats).sum(dim=2).mean(dim=1).sum()
     if args.global_kl_beta != 0:
       kl_loss += args.global_kl_beta * kl_divergence(Normal(posterior_means, posterior_std_devs), global_prior).sum(dim=2).mean(dim=1).sum()
     # Calculate latent overshooting objective for t > 0
@@ -140,7 +143,7 @@ for episode in tqdm(range(args.seed_episodes + 1, args.episodes + 1), total=args
         # Update belief/state using prior from previous belief/state and previous action (over entire sequence at once)
         _, _, prior_means, prior_std_devs = transition_model(prior_states[t_], actions[t:d], beliefs[t_], None, nonterminals[t:d])
         # Calculate and update KL loss
-        kl_loss += args.overshooting_kl_beta * torch.max(kl_divergence(Normal(posterior_means[t_ + 1:d_ + 1].detach(), posterior_std_devs[t_ + 1:d_ + 1].detach()), Normal(prior_means, prior_std_devs)).sum(dim=2), free_nats).mean(dim=1).sum()
+        kl_loss += args.overshooting_kl_beta * torch.max(kl_divergence(Normal(posterior_means[t_ + 1:d_ + 1].detach(), posterior_std_devs[t_ + 1:d_ + 1].detach()), Normal(prior_means, prior_std_devs)), free_nats).sum(dim=2).mean(dim=1).sum()
     # Update model parameters
     optimiser.zero_grad()
     (observation_loss + reward_loss + kl_loss).backward()
@@ -153,9 +156,9 @@ for episode in tqdm(range(args.seed_episodes + 1, args.episodes + 1), total=args
   metrics['observation_loss'].append(losses[0])
   metrics['reward_loss'].append(losses[1])
   metrics['kl_loss'].append(losses[2])
-  lineplot(metrics['episodes'], metrics['observation_loss'], 'observation_loss', 'results')
-  lineplot(metrics['episodes'], metrics['reward_loss'], 'reward_loss', 'results')
-  lineplot(metrics['episodes'], metrics['kl_loss'], 'kl_loss', 'results')
+  lineplot(metrics['episodes'][-len(metrics['observation_loss']):], metrics['observation_loss'], 'observation_loss', 'results')
+  lineplot(metrics['episodes'][-len(metrics['reward_loss']):], metrics['reward_loss'], 'reward_loss', 'results')
+  lineplot(metrics['episodes'][-len(metrics['kl_loss']):], metrics['kl_loss'], 'kl_loss', 'results')
   
   # Data collection
   with torch.no_grad():
@@ -163,10 +166,12 @@ for episode in tqdm(range(args.seed_episodes + 1, args.episodes + 1), total=args
     belief, posterior_state, action = torch.zeros(1, args.belief_size, device=args.device), torch.zeros(1, args.state_size, device=args.device), torch.zeros(1, env.action_size, device=args.device)
     pbar = tqdm(range(args.max_episode_length // args.action_repeat))
     for t in pbar:
-      belief, posterior_state, action, next_observation, reward, done = update_belief_and_act(args, env, planner, transition_model, encoder, reward_model, belief, posterior_state, action, observation, test=False)
+      belief, posterior_state, action, next_observation, reward, done = update_belief_and_act(args, env, planner, transition_model, encoder, reward_model, belief, posterior_state, action, observation.to(device=args.device), test=False)
       D.append(observation, action.cpu(), reward, done)
       observation = next_observation
       if done:
+        metrics['steps'].append(t + metrics['steps'][-1])
+        metrics['episodes'].append(episode)
         pbar.close()
         break
   
@@ -178,20 +183,21 @@ for episode in tqdm(range(args.seed_episodes + 1, args.episodes + 1), total=args
         observation, total_reward = env.reset(), 0
         belief, posterior_state, action = torch.zeros(1, args.belief_size, device=args.device), torch.zeros(1, args.state_size, device=args.device), torch.zeros(1, env.action_size, device=args.device)
         for t in range(args.max_episode_length // args.action_repeat):
-          belief, posterior_state, action, next_observation, reward, done = update_belief_and_act(args, env, planner, transition_model, encoder, reward_model, belief, posterior_state, action, observation, test=True)
+          belief, posterior_state, action, next_observation, reward, done = update_belief_and_act(args, env, planner, transition_model, encoder, reward_model, belief, posterior_state, action, observation.to(device=args.device), test=True)
           total_reward += reward
+          if args.render:
+            env.render()
           if test_episode == 0 and not args.symbolic_env:  # For first episode collect real vs. predicted frames for video
             video_frames.append(torch.cat([observation[0], observation_model(belief, posterior_state).cpu()[0]], dim=2).numpy())
           observation = next_observation
-          if args.render:
-            env.render()
           if done:
             break
         total_rewards.append(total_reward)
     # Update and plot reward metrics (and write video if applicable)
     metrics['test_episodes'].append(episode)
     metrics['rewards'].append(total_rewards)
-    lineplot(metrics['test_episodes'], metrics['rewards'], 'rewards', 'results')
+    lineplot(metrics['test_episodes'], metrics['rewards'], 'rewards_episodes', 'results')
+    lineplot(np.asarray(metrics['steps'])[np.asarray(metrics['test_episodes']) - 1], metrics['rewards'], 'rewards_steps', 'results', xaxis='step')
     if not args.symbolic_env:
       write_video(video_frames, 'test_episode_%s' % str(episode).zfill(len(str(args.episodes))), 'results')
     # Save metrics

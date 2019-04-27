@@ -13,6 +13,7 @@ class ExperienceReplay():
     self.nonterminals = np.empty((size, 1), dtype=np.float32)
     self.idx = 0
     self.full = False  # Tracks if memory has been filled/all slots are valid
+    self.steps, self.episodes = 0, 0  # Tracks how much experience has been used in total
 
   def append(self, observation, action, reward, done):
     if self.symbolic_env:
@@ -24,6 +25,7 @@ class ExperienceReplay():
     self.nonterminals[self.idx] = not done
     self.idx = (self.idx + 1) % self.size
     self.full = self.full or self.idx == 0
+    self.steps, self.episodes = self.steps + 1, self.episodes + (1 if done else 0)
 
   # Returns a single sequence chunk uniformly sampled from the memory TODO Profile and possibly parallelise over all batches?
   def _sample_one(self, L):

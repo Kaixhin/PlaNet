@@ -1,6 +1,3 @@
-"""
-Note: Danijar mentioned switching ReLU to ELU improves performance: https://github.com/google-research/planet/issues/21#issuecomment-485200191
-"""
 import torch
 from torch import nn
 from torch.nn import functional as F

@@ -7,7 +7,7 @@ from plotly.graph_objs.scatter import Line
 
 
 # Plots min, max and mean + standard deviation bars of a population over time
-def lineplot(xs, ys_population, title, path=''):
+def lineplot(xs, ys_population, title, path='', xaxis='episode'):
   max_colour, mean_colour, std_colour, transparent = 'rgb(0, 132, 180)', 'rgb(0, 172, 237)', 'rgba(29, 202, 255, 0.2)', 'rgba(0, 0, 0, 0)'
 
   if isinstance(ys_population[0], list) or isinstance(ys_population[0], tuple):
@@ -25,7 +25,7 @@ def lineplot(xs, ys_population, title, path=''):
     data = [Scatter(x=xs, y=ys_population, line=Line(color=mean_colour))]
   plotly.offline.plot({
     'data': data,
-    'layout': dict(title=title, xaxis={'title': 'Step'}, yaxis={'title': title})
+    'layout': dict(title=title, xaxis={'title': xaxis}, yaxis={'title': title})
   }, filename=os.path.join(path, title + '.html'), auto_open=False)
 
 
