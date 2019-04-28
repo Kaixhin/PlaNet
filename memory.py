@@ -27,19 +27,23 @@ class ExperienceReplay():
     self.full = self.full or self.idx == 0
     self.steps, self.episodes = self.steps + 1, self.episodes + (1 if done else 0)
 
-  # Returns a single sequence chunk uniformly sampled from the memory TODO Profile and possibly parallelise over all batches?
-  def _sample_one(self, L):
+  # Returns an index for a valid single sequence chunk uniformly sampled from the memory
+  def _sample_idx(self, L):
     valid_idx = False
     while not valid_idx:
       idx = np.random.randint(0, self.size if self.full else self.idx - L)
       idxs = np.arange(idx, idx + L) % self.size
       valid_idx = not self.idx in idxs[1:]  # Make sure data does not cross the memory index
-    observations = self.observations[idxs].astype(np.float32)
+    return idxs
+
+  def _retrieve_batch(self, idxs, n, L):
+    vec_idxs = idxs.reshape(-1)  # Unroll indices
+    observations = self.observations[vec_idxs].astype(np.float32)
     if not self.symbolic_env:
       observations = np.divide(observations, 255.)  # Undo discretisation for visual observations
-    return observations, self.actions[idxs], self.rewards[idxs], self.nonterminals[idxs]
+    return observations.reshape(L, n, *observations.shape[1:]), self.actions[vec_idxs].reshape(L, n, -1), self.rewards[vec_idxs].reshape(L, n), self.nonterminals[vec_idxs].reshape(L, n, 1)
 
   # Returns a batch of sequence chunks uniformly sampled from the memory
   def sample(self, n, L):
-    batch = [self._sample_one(L) for _ in range(n)]
-    return [torch.from_numpy(np.stack(item, axis=1)).to(device=self.device) for item in zip(*batch)]
+    batch = self._retrieve_batch(np.asarray([self._sample_idx(L) for _ in range(n)]), n, L)
+    return [torch.from_numpy(item).to(device=self.device) for item in batch]
