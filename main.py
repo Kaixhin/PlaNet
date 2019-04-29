@@ -68,7 +68,9 @@ else:
   args.device = torch.device('cpu')
 os.makedirs('results', exist_ok=True)
 os.makedirs('checkpoints', exist_ok=True)
-metrics = {'steps': [], 'episodes': [], 'test_episodes': [], 'rewards': [], 'observation_loss': [], 'reward_loss': [], 'kl_loss': []}
+metrics = {'steps': [], 'episodes': [], 'train_rewards': [], 'test_episodes': [], 'test_rewards': [], 'observation_loss': [], 'reward_loss': [], 'kl_loss': []}
+
+
 # Initialise environment, planner and experience replay memory
 env = Env(args.env, args.symbolic_env, args.seed, args.max_episode_length, args.action_repeat)
 planner = MPCPlanner(env.action_size, args.planning_horizon, args.optimisation_iters, args.candidates, args.top_candidates)
@@ -112,7 +114,7 @@ def update_belief_and_act(args, env, planner, transition_model, encoder, reward_
   # Infer belief over current state q(s_t|o≤t,a<t) from the history
   belief, _, _, _, posterior_state, _, _ = transition_model(posterior_state, action.unsqueeze(dim=0), belief, encoder(observation).unsqueeze(dim=0))  # Action and observation need extra time dimension
   belief, posterior_state = belief.squeeze(dim=0), posterior_state.squeeze(dim=0)  # Remove time dimension from belief/state
-  action = planner(belief, posterior_state, transition_model, reward_model)  # action ← planner(q(s_t|o≤t,a<t), p)
+  action = planner(belief, posterior_state, transition_model, reward_model)  # Get action from planner(q(s_t|o≤t,a<t), p)
   if not test:
     action = action + args.action_noise * torch.randn_like(action)  # Add exploration noise ε ~ p(ε) to the action
   next_observation, reward, done = env.step(action[0].cpu())  # Perform environment step (action repeats handled internally)
@@ -120,8 +122,8 @@ def update_belief_and_act(args, env, planner, transition_model, encoder, reward_
 
 
 for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total=args.episodes, initial=metrics['episodes'][-1] + 1):
-  losses = []
   # Model fitting
+  losses = []
   for s in tqdm(range(args.collect_interval)):
     # Draw sequence chunks {(o_t, a_t, r_t+1, terminal_t+1)} ~ D uniformly at random from the dataset (including terminal flags)
     observations, actions, rewards, nonterminals = D.sample(args.batch_size, args.chunk_size + 1)  # Transitions start at time t = 0
@@ -144,6 +146,7 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
         _, _, prior_means, prior_std_devs = transition_model(prior_states[t_], actions[t:d], beliefs[t_], None, nonterminals[t:d])
         # Calculate and update KL loss
         kl_loss += args.overshooting_kl_beta * torch.max(kl_divergence(Normal(posterior_means[t_ + 1:d_ + 1].detach(), posterior_std_devs[t_ + 1:d_ + 1].detach()), Normal(prior_means, prior_std_devs)), free_nats).sum(dim=2).mean(dim=1).sum()
+
     # Update model parameters
     optimiser.zero_grad()
     (observation_loss + reward_loss + kl_loss).backward()
@@ -151,6 +154,7 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
     optimiser.step()
     # Update loss metrics
     losses.append([observation_loss.item(), reward_loss.item(), kl_loss.item()])
+
   # Update and plot loss metrics
   losses = tuple(zip(*losses))
   metrics['observation_loss'].append(losses[0])
@@ -159,24 +163,37 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
   lineplot(metrics['episodes'][-len(metrics['observation_loss']):], metrics['observation_loss'], 'observation_loss', 'results')
   lineplot(metrics['episodes'][-len(metrics['reward_loss']):], metrics['reward_loss'], 'reward_loss', 'results')
   lineplot(metrics['episodes'][-len(metrics['kl_loss']):], metrics['kl_loss'], 'kl_loss', 'results')
-  
+
+
   # Data collection
   with torch.no_grad():
-    observation = env.reset()
+    observation, total_reward = env.reset(), 0
     belief, posterior_state, action = torch.zeros(1, args.belief_size, device=args.device), torch.zeros(1, args.state_size, device=args.device), torch.zeros(1, env.action_size, device=args.device)
     pbar = tqdm(range(args.max_episode_length // args.action_repeat))
     for t in pbar:
       belief, posterior_state, action, next_observation, reward, done = update_belief_and_act(args, env, planner, transition_model, encoder, reward_model, belief, posterior_state, action, observation.to(device=args.device), test=False)
       D.append(observation, action.cpu(), reward, done)
+      total_reward += reward
       observation = next_observation
       if done:
-        metrics['steps'].append(t + metrics['steps'][-1])
-        metrics['episodes'].append(episode)
         pbar.close()
         break
-  
+    
+    # Update and plot train reward metrics
+    metrics['steps'].append(t + metrics['steps'][-1])
+    metrics['episodes'].append(episode)
+    metrics['train_rewards'].append(total_reward)
+    lineplot(metrics['episodes'][-len(metrics['train_rewards']):], metrics['train_rewards'], 'train_rewards', 'results')
+
+
   # Test model
   if episode % args.test_interval == 0:
+    # Set models to eval mode
+    transition_model.eval()
+    observation_model.eval()
+    reward_model.eval()
+    encoder.eval()
+    
     with torch.no_grad():
       total_rewards, video_frames = [], []
       for test_episode in tqdm(range(args.test_episodes)):
@@ -193,20 +210,28 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
           if done:
             break
         total_rewards.append(total_reward)
-    # Update and plot reward metrics (and write video if applicable)
+
+    # Update and plot reward metrics (and write video if applicable) and save metrics
     metrics['test_episodes'].append(episode)
-    metrics['rewards'].append(total_rewards)
-    lineplot(metrics['test_episodes'], metrics['rewards'], 'rewards_episodes', 'results')
-    lineplot(np.asarray(metrics['steps'])[np.asarray(metrics['test_episodes']) - 1], metrics['rewards'], 'rewards_steps', 'results', xaxis='step')
+    metrics['test_rewards'].append(total_rewards)
+    lineplot(metrics['test_episodes'], metrics['test_rewards'], 'test_rewards', 'results')
+    lineplot(np.asarray(metrics['steps'])[np.asarray(metrics['test_episodes']) - 1], metrics['test_rewards'], 'test_rewards_steps', 'results', xaxis='step')
     if not args.symbolic_env:
       write_video(video_frames, 'test_episode_%s' % str(episode).zfill(len(str(args.episodes))), 'results')
-    # Save metrics
     torch.save(metrics, os.path.join('results', 'metrics.pth'))
+
+    # Set models to train mode
+    transition_model.train()
+    observation_model.train()
+    reward_model.train()
+    encoder.train()
+
 
   # Checkpoint models
   if episode % args.checkpoint_interval == 0:
     torch.save({'transition_model': transition_model.state_dict(), 'observation_model': observation_model.state_dict(), 'reward_model': reward_model.state_dict(), 'encoder': encoder.state_dict(), 'optimiser': optimiser.state_dict()}, os.path.join('checkpoints', 'models_%d.pth' % episode))
     if args.checkpoint_experience:
       torch.save(D, os.path.join('checkpoints', 'experience.pth'))  # Warning: will fail with MemoryError with large memory sizes
+
 
 env.close()
