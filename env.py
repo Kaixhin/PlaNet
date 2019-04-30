@@ -26,7 +26,7 @@ class ControlSuiteEnv():
     self.t = 0  # Reset internal timer
     state = self._env.reset()
     if self.symbolic:
-      return torch.tensor(np.concatenate([obs for obs in state.observation.values()], axis=0), dtype=torch.float32).unsqueeze(dim=0)
+      return torch.tensor(np.concatenate([np.array([obs]) if isinstance(obs, float) else obs for obs in state.observation.values()], axis=0), dtype=torch.float32).unsqueeze(dim=0)
     else:
       return torch.tensor(cv2.resize(self._env.physics.render(camera_id=0), (64, 64), interpolation=cv2.INTER_LINEAR).transpose(2, 0, 1), dtype=torch.float32).div_(255).unsqueeze(dim=0)
 
@@ -41,7 +41,7 @@ class ControlSuiteEnv():
       if done:
         break
     if self.symbolic:
-      observation = torch.tensor(np.concatenate([obs for obs in state.observation.values()], axis=0), dtype=torch.float32).unsqueeze(dim=0)
+      observation = torch.tensor(np.concatenate([np.array([obs]) if isinstance(obs, float) else obs for obs in state.observation.values()], axis=0), dtype=torch.float32).unsqueeze(dim=0)
     else:
       observation = torch.tensor(cv2.resize(self._env.physics.render(camera_id=0), (64, 64), interpolation=cv2.INTER_LINEAR).transpose(2, 0, 1), dtype=torch.float32).div_(255).unsqueeze(dim=0)
     return observation, reward, done
@@ -56,7 +56,7 @@ class ControlSuiteEnv():
 
   @property
   def observation_size(self):
-    return sum([obs.shape[0] for obs in self._env.observation_spec().values()]) if self.symbolic else (3, 64, 64)
+    return sum([(1 if len(obs.shape) == 0 else obs.shape[0]) for obs in self._env.observation_spec().values()]) if self.symbolic else (3, 64, 64)
 
   @property
   def action_size(self):
@@ -126,3 +126,26 @@ def Env(env, symbolic, seed, max_episode_length, action_repeat):
     return GymEnv(env, symbolic, seed, max_episode_length, action_repeat)
   elif env in CONTROL_SUITE_ENVS:
     return ControlSuiteEnv(env, symbolic, seed, max_episode_length, action_repeat)
+
+
+# Wrapper for batching environments together
+class EnvBatcher():
+  def __init__(self, env_class, env_args, env_kwargs, n):
+    self.n = n
+    self.envs = [env_class(*env_args, **env_kwargs) for _ in range(n)]
+    self.dones = [True] * n
+
+  # Resets every environment and returns observation
+  def reset(self):
+    observations = [env.reset() for env in self.envs]
+    self.dones = [False] * self.n
+    return torch.cat(observations)
+
+  # Steps/resets every environment and returns (observation, reward, done); returns blank observation once done
+  def step(self, actions):
+    observations, rewards, dones = zip(*[env.step(action) for env, action in zip(self.envs, actions)])
+    self.dones = dones
+    return torch.cat(observations), torch.tensor(rewards, dtype=torch.float32), torch.tensor(dones, dtype=torch.uint8)
+
+  def close(self):
+    [env.close() for env in self.envs]
