@@ -1,5 +1,5 @@
 import torch
-from torch import nn
+from torch import jit, nn
 from torch.nn import functional as F
 
 
@@ -66,7 +66,7 @@ class TransitionModel(nn.Module):
       return map(torch.stack, [beliefs[1:], prior_states[1:], prior_means[1:], prior_std_devs[1:], posterior_states[1:], posterior_means[1:], posterior_std_devs[1:]])
 
 
-class SymbolicObservationModel(nn.Module):
+class SymbolicObservationModel(jit.ScriptModule):
   def __init__(self, observation_size, belief_size, state_size, embedding_size, activation_function='relu'):
     super().__init__()
     self.act_fn = getattr(F, activation_function)
@@ -74,6 +74,7 @@ class SymbolicObservationModel(nn.Module):
     self.fc2 = nn.Linear(embedding_size, embedding_size)
     self.fc3 = nn.Linear(embedding_size, observation_size)
 
+  @jit.script_method
   def forward(self, belief, state):
     hidden = self.act_fn(self.fc1(torch.cat([belief, state], dim=1)))
     hidden = self.act_fn(self.fc2(hidden))
@@ -81,7 +82,7 @@ class SymbolicObservationModel(nn.Module):
     return observation
 
 
-class VisualObservationModel(nn.Module):
+class VisualObservationModel(jit.ScriptModule):
   def __init__(self, belief_size, state_size, embedding_size, activation_function='relu'):
     super().__init__()
     self.act_fn = getattr(F, activation_function)
@@ -92,6 +93,7 @@ class VisualObservationModel(nn.Module):
     self.conv3 = nn.ConvTranspose2d(64, 32, 6, stride=2)
     self.conv4 = nn.ConvTranspose2d(32, 3, 6, stride=2)
 
+  @jit.script_method
   def forward(self, belief, state):
     hidden = self.fc1(torch.cat([belief, state], dim=1))  # No nonlinearity here
     hidden = hidden.view(-1, self.embedding_size, 1, 1)
@@ -109,7 +111,7 @@ def ObservationModel(symbolic, observation_size, belief_size, state_size, embedd
     return VisualObservationModel(belief_size, state_size, embedding_size, activation_function)
 
 
-class RewardModel(nn.Module):
+class RewardModel(jit.ScriptModule):
   def __init__(self, belief_size, state_size, hidden_size, activation_function='relu'):
     super().__init__()
     self.act_fn = getattr(F, activation_function)
@@ -117,6 +119,7 @@ class RewardModel(nn.Module):
     self.fc2 = nn.Linear(hidden_size, hidden_size)
     self.fc3 = nn.Linear(hidden_size, 1)
 
+  @jit.script_method
   def forward(self, belief, state):
     hidden = self.act_fn(self.fc1(torch.cat([belief, state], dim=1)))
     hidden = self.act_fn(self.fc2(hidden))
@@ -124,7 +127,7 @@ class RewardModel(nn.Module):
     return reward
 
 
-class SymbolicEncoder(nn.Module):
+class SymbolicEncoder(jit.ScriptModule):
   def __init__(self, observation_size, embedding_size, activation_function='relu'):
     super().__init__()
     self.act_fn = getattr(F, activation_function)
@@ -132,6 +135,7 @@ class SymbolicEncoder(nn.Module):
     self.fc2 = nn.Linear(embedding_size, embedding_size)
     self.fc3 = nn.Linear(embedding_size, embedding_size)
 
+  @jit.script_method
   def forward(self, observation):
     hidden = self.act_fn(self.fc1(observation))
     hidden = self.act_fn(self.fc2(hidden))
@@ -139,7 +143,7 @@ class SymbolicEncoder(nn.Module):
     return hidden
 
 
-class VisualEncoder(nn.Module):
+class VisualEncoder(jit.ScriptModule):
   def __init__(self, embedding_size, activation_function='relu'):
     super().__init__()
     self.act_fn = getattr(F, activation_function)
@@ -149,6 +153,7 @@ class VisualEncoder(nn.Module):
     self.conv3 = nn.Conv2d(64, 128, 4, stride=2)
     self.conv4 = nn.Conv2d(128, 256, 4, stride=2)
 
+  @jit.script_method
   def forward(self, observation):
     hidden = self.act_fn(self.conv1(observation))
     hidden = self.act_fn(self.conv2(hidden))
