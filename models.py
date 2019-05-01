@@ -1,3 +1,4 @@
+from typing import Optional, List
 import torch
 from torch import jit, nn
 from torch.nn import functional as F
@@ -11,7 +12,9 @@ def bottle(f, x_tuple):
   return y.view(x_sizes[0][0], x_sizes[0][1], *y_size[1:])
 
 
-class TransitionModel(nn.Module):
+class TransitionModel(jit.ScriptModule):
+  __constants__ = ['min_std_dev']
+
   def __init__(self, belief_size, state_size, action_size, hidden_size, embedding_size, activation_function='relu', min_std_dev=1e-5):
     super().__init__()
     self.act_fn = getattr(F, activation_function)
@@ -33,14 +36,12 @@ class TransitionModel(nn.Module):
   # ps: -X-
   # b : -x--X--X--X--X--X-
   # s : -x--X--X--X--X--X-
-  def forward(self, prev_state, actions, prev_belief, observations=None, nonterminals=None):
+  @jit.script_method
+  def forward(self, prev_state:torch.Tensor, actions:torch.Tensor, prev_belief:torch.Tensor, observations:Optional[torch.Tensor]=None, nonterminals:Optional[torch.Tensor]=None) -> List[torch.Tensor]:
     # Create lists for hidden states (cannot use single tensor as buffer because autograd won't work with inplace writes)
     T = actions.size(0) + 1
-    beliefs, prior_states, prior_means, prior_std_devs = [None] * T, [None] * T, [None] * T, [None] * T
-    beliefs[0], prior_states[0] = prev_belief, prev_state
-    if observations is not None:
-      posterior_states, posterior_means, posterior_std_devs = [None] * T, [None] * T, [None] * T
-      posterior_states[0] = prev_state
+    beliefs, prior_states, prior_means, prior_std_devs, posterior_states, posterior_means, posterior_std_devs = [torch.empty(0)] * T, [torch.empty(0)] * T, [torch.empty(0)] * T, [torch.empty(0)] * T, [torch.empty(0)] * T, [torch.empty(0)] * T, [torch.empty(0)] * T
+    beliefs[0], prior_states[0], posterior_states[0] = prev_belief, prev_state, prev_state
     # Loop over time sequence
     for t in range(T - 1):
       _state = prior_states[t] if observations is None else posterior_states[t]  # Select appropriate previous state
@@ -60,10 +61,11 @@ class TransitionModel(nn.Module):
         posterior_means[t + 1], _posterior_std_dev = torch.chunk(self.fc_state_posterior(hidden), 2, dim=1)
         posterior_std_devs[t + 1] = F.softplus(_posterior_std_dev) + self.min_std_dev
         posterior_states[t + 1] = posterior_means[t + 1] + posterior_std_devs[t + 1] * torch.randn_like(posterior_means[t + 1])
-    if observations is None:  # Return new hidden states
-      return map(torch.stack, [beliefs[1:], prior_states[1:], prior_means[1:], prior_std_devs[1:]])
-    else:
-      return map(torch.stack, [beliefs[1:], prior_states[1:], prior_means[1:], prior_std_devs[1:], posterior_states[1:], posterior_means[1:], posterior_std_devs[1:]])
+    # Return new hidden states
+    hidden = [torch.stack(beliefs[1:], dim=0), torch.stack(prior_states[1:], dim=0), torch.stack(prior_means[1:], dim=0), torch.stack(prior_std_devs[1:], dim=0)]
+    if observations is not None:
+      hidden += [torch.stack(posterior_states[1:], dim=0), torch.stack(posterior_means[1:], dim=0), torch.stack(posterior_std_devs[1:], dim=0)]
+    return hidden
 
 
 class SymbolicObservationModel(jit.ScriptModule):
@@ -83,6 +85,8 @@ class SymbolicObservationModel(jit.ScriptModule):
 
 
 class VisualObservationModel(jit.ScriptModule):
+  __constants__ = ['embedding_size']
+  
   def __init__(self, belief_size, state_size, embedding_size, activation_function='relu'):
     super().__init__()
     self.act_fn = getattr(F, activation_function)
@@ -144,6 +148,8 @@ class SymbolicEncoder(jit.ScriptModule):
 
 
 class VisualEncoder(jit.ScriptModule):
+  __constants__ = ['embedding_size']
+  
   def __init__(self, embedding_size, activation_function='relu'):
     super().__init__()
     self.act_fn = getattr(F, activation_function)
