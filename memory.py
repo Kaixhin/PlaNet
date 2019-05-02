@@ -37,7 +37,7 @@ class ExperienceReplay():
     return idxs
 
   def _retrieve_batch(self, idxs, n, L):
-    vec_idxs = idxs.reshape(-1)  # Unroll indices
+    vec_idxs = idxs.transpose().reshape(-1)  # Unroll indices
     observations = self.observations[vec_idxs].astype(np.float32)
     if not self.symbolic_env:
       observations = np.divide(observations, 255.)  # Undo discretisation for visual observations
