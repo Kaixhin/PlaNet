@@ -126,7 +126,7 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
   losses = []
   for s in tqdm(range(args.collect_interval)):
     # Draw sequence chunks {(o_t, a_t, r_t+1, terminal_t+1)} ~ D uniformly at random from the dataset (including terminal flags)
-    observations, actions, rewards, nonterminals = D.sample(args.batch_size, args.chunk_size + 1)  # Transitions start at time t = 0
+    observations, actions, rewards, nonterminals = D.sample(args.batch_size, args.chunk_size)  # Transitions start at time t = 0
     # Create initial belief and state for time t = 0
     init_belief, init_state = torch.zeros(args.batch_size, args.belief_size, device=args.device), torch.zeros(args.batch_size, args.state_size, device=args.device)
     # Update belief/state using posterior from previous belief/state, previous action and current observation (over entire sequence at once)
@@ -138,9 +138,9 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
     if args.global_kl_beta != 0:
       kl_loss += (1 / args.chunk_size) * args.global_kl_beta * kl_divergence(Normal(posterior_means, posterior_std_devs), global_prior).sum(dim=2).mean(dim=(0, 1))
     # Calculate latent overshooting objective for t > 0
-    if args.overshooting_kl_beta != 0:  
-      for t in range(1, args.chunk_size):  # TODO: See if this is worth parallelising too
-        d = min(t + args.overshooting_distance, args.chunk_size)  # Overshooting distance
+    if args.overshooting_kl_beta != 0:
+      for t in range(1, args.chunk_size - 1):  # TODO: See if this is worth parallelising too
+        d = min(t + args.overshooting_distance, args.chunk_size - 1)  # Overshooting distance
         t_, d_ = t - 1, d - 1 # Use t_ and d_ to deal with different time indexing for latent states
         # Update belief/state using prior from previous belief/state and previous action (over entire sequence at once)
         _, _, prior_means, prior_std_devs = transition_model(prior_states[t_], actions[t:d], beliefs[t_], None, nonterminals[t:d])
