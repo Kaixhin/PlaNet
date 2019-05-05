@@ -37,6 +37,7 @@ parser.add_argument('--batch-size', type=int, default=50, metavar='B', help='Bat
 parser.add_argument('--chunk-size', type=int, default=50, metavar='L', help='Chunk size')
 parser.add_argument('--overshooting-distance', type=int, default=50, metavar='D', help='Latent overshooting distance/latent overshooting weight for t = 1')
 parser.add_argument('--overshooting-kl-beta', type=float, default=1, metavar='β>1', help='Latent overshooting KL weight for t > 1 (0 to disable)')
+parser.add_argument('--overshooting-reward-scale', type=float, default=100, metavar='R>1', help='Latent overshooting reward prediction weight for t > 1')
 parser.add_argument('--global-kl-beta', type=float, default=0.1, metavar='βg', help='Global KL weight (0 to disable)')
 parser.add_argument('--free-nats', type=float, default=2, metavar='F', help='Free nats')
 parser.add_argument('--learning-rate', type=float, default=1e-3, metavar='α', help='Learning rate')  # TODO: Original has a linear learning rate decay, but it seems unlikely that this makes a significant difference
@@ -53,6 +54,7 @@ parser.add_argument('--load-experience', action='store_true', help='Load experie
 parser.add_argument('--load-checkpoint', type=int, default=0, metavar='E', help='Load model checkpoint (from given episode)')
 parser.add_argument('--render', action='store_true', help='Render environment')
 args = parser.parse_args()
+args.overshooting_distance = min(args.chunk_size, args.overshooting_distance)  # Overshooting distance cannot be greater than chunk size
 print(' ' * 26 + 'Options')
 for k, v in vars(args).items():
   print(' ' * 26 + k + ': ' + str(v))
@@ -144,13 +146,16 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
         d = min(t + args.overshooting_distance, args.chunk_size - 1)  # Overshooting distance
         t_, d_ = t - 1, d - 1  # Use t_ and d_ to deal with different time indexing for latent states
         seq_pad = (0, 0, 0, 0, 0, t - d + args.overshooting_distance)  # Calculate sequence padding so overshooting terms can be calculated in one batch
-        # Store (0) actions, (1) nonterminals, (2) beliefs, (3) prior states, (4) posterior means, (5) posterior standard deviations and (6) sequence masks
-        overshooting_vars.append((F.pad(actions[t:d], seq_pad), F.pad(nonterminals[t:d], seq_pad), beliefs[t_], prior_states[t_], F.pad(posterior_means[t_ + 1:d_ + 1].detach(), seq_pad), F.pad(posterior_std_devs[t_ + 1:d_ + 1].detach(), seq_pad, value=1), F.pad(torch.ones(d - t, args.batch_size, args.state_size, device=args.device), seq_pad)))  # Posterior standard deviations must be padded with > 0 to prevent infinite KL divergences
+        # Store (0) actions, (1) nonterminals, (2) rewards, (3) beliefs, (4) prior states, (5) posterior means, (6) posterior standard deviations and (7) sequence masks
+        overshooting_vars.append((F.pad(actions[t:d], seq_pad), F.pad(nonterminals[t:d], seq_pad), F.pad(rewards[t:d], seq_pad[2:]), beliefs[t_], prior_states[t_], F.pad(posterior_means[t_ + 1:d_ + 1].detach(), seq_pad), F.pad(posterior_std_devs[t_ + 1:d_ + 1].detach(), seq_pad, value=1), F.pad(torch.ones(d - t, args.batch_size, args.state_size, device=args.device), seq_pad)))  # Posterior standard deviations must be padded with > 0 to prevent infinite KL divergences
       overshooting_vars = tuple(zip(*overshooting_vars))
       # Update belief/state using prior from previous belief/state and previous action (over entire sequence at once)
-      _, _, prior_means, prior_std_devs = transition_model(torch.cat(overshooting_vars[3], dim=0), torch.cat(overshooting_vars[0], dim=1), torch.cat(overshooting_vars[2], dim=0), None, torch.cat(overshooting_vars[1], dim=1))
+      beliefs, prior_states, prior_means, prior_std_devs = transition_model(torch.cat(overshooting_vars[4], dim=0), torch.cat(overshooting_vars[0], dim=1), torch.cat(overshooting_vars[3], dim=0), None, torch.cat(overshooting_vars[1], dim=1))
+      seq_mask = torch.cat(overshooting_vars[7], dim=1)
       # Calculate overshooting KL loss with sequence mask
-      kl_loss += (1 / args.overshooting_distance) * args.overshooting_kl_beta * torch.max((kl_divergence(Normal(torch.cat(overshooting_vars[4], dim=1), torch.cat(overshooting_vars[5], dim=1)), Normal(prior_means, prior_std_devs)) * torch.cat(overshooting_vars[6], dim=1)).sum(dim=2), free_nats).mean(dim=(0, 1)) * (args.chunk_size - 1)  # Update KL loss (compensating for extra average over each overshooting/open loop sequence) 
+      kl_loss += (1 / args.overshooting_distance) * args.overshooting_kl_beta * torch.max((kl_divergence(Normal(torch.cat(overshooting_vars[5], dim=1), torch.cat(overshooting_vars[6], dim=1)), Normal(prior_means, prior_std_devs)) * seq_mask).sum(dim=2), free_nats).mean(dim=(0, 1)) * (args.chunk_size - 1)  # Update KL loss (compensating for extra average over each overshooting/open loop sequence) 
+      # Calculate overshooting reward prediction loss with sequence mask
+      reward_loss += args.overshooting_reward_scale * F.mse_loss(bottle(reward_model, (beliefs, prior_states)) * seq_mask[:, :, 0], torch.cat(overshooting_vars[2], dim=1), reduction='none').mean(dim=(0, 1)) * (args.chunk_size - 1)  # Update reward loss (compensating for extra average over each overshooting/open loop sequence) 
 
     # Update model parameters
     optimiser.zero_grad()
