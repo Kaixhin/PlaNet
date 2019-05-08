@@ -37,7 +37,7 @@ parser.add_argument('--batch-size', type=int, default=50, metavar='B', help='Bat
 parser.add_argument('--chunk-size', type=int, default=50, metavar='L', help='Chunk size')
 parser.add_argument('--overshooting-distance', type=int, default=50, metavar='D', help='Latent overshooting distance/latent overshooting weight for t = 1')
 parser.add_argument('--overshooting-kl-beta', type=float, default=1, metavar='β>1', help='Latent overshooting KL weight for t > 1 (0 to disable)')
-parser.add_argument('--overshooting-reward-scale', type=float, default=100, metavar='R>1', help='Latent overshooting reward prediction weight for t > 1')
+parser.add_argument('--overshooting-reward-scale', type=float, default=1, metavar='R>1', help='Latent overshooting reward prediction weight for t > 1 (0 to disable)')
 parser.add_argument('--global-kl-beta', type=float, default=0.1, metavar='βg', help='Global KL weight (0 to disable)')
 parser.add_argument('--free-nats', type=float, default=2, metavar='F', help='Free nats')
 parser.add_argument('--learning-rate', type=float, default=1e-3, metavar='α', help='Learning rate')  # TODO: Original has a linear learning rate decay, but it seems unlikely that this makes a significant difference
@@ -155,7 +155,8 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
       # Calculate overshooting KL loss with sequence mask
       kl_loss += (1 / args.overshooting_distance) * args.overshooting_kl_beta * torch.max((kl_divergence(Normal(torch.cat(overshooting_vars[5], dim=1), torch.cat(overshooting_vars[6], dim=1)), Normal(prior_means, prior_std_devs)) * seq_mask).sum(dim=2), free_nats).mean(dim=(0, 1)) * (args.chunk_size - 1)  # Update KL loss (compensating for extra average over each overshooting/open loop sequence) 
       # Calculate overshooting reward prediction loss with sequence mask
-      reward_loss += (1 / args.overshooting_distance) * args.overshooting_reward_scale * F.mse_loss(bottle(reward_model, (beliefs, prior_states)) * seq_mask[:, :, 0], torch.cat(overshooting_vars[2], dim=1), reduction='none').mean(dim=(0, 1)) * (args.chunk_size - 1)  # Update reward loss (compensating for extra average over each overshooting/open loop sequence) 
+      if args.overshooting_reward_scale != 0:
+        reward_loss += (1 / args.overshooting_distance) * args.overshooting_reward_scale * F.mse_loss(bottle(reward_model, (beliefs, prior_states)) * seq_mask[:, :, 0], torch.cat(overshooting_vars[2], dim=1), reduction='none').mean(dim=(0, 1)) * (args.chunk_size - 1)  # Update reward loss (compensating for extra average over each overshooting/open loop sequence) 
 
     # Update model parameters
     optimiser.zero_grad()
