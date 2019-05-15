@@ -15,7 +15,7 @@ def bottle(f, x_tuple):
 class TransitionModel(jit.ScriptModule):
   __constants__ = ['min_std_dev']
 
-  def __init__(self, belief_size, state_size, action_size, hidden_size, embedding_size, activation_function='relu', min_std_dev=1e-5):
+  def __init__(self, belief_size, state_size, action_size, hidden_size, embedding_size, activation_function='relu', min_std_dev=0.1):
     super().__init__()
     self.act_fn = getattr(F, activation_function)
     self.min_std_dev = min_std_dev
