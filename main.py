@@ -30,7 +30,7 @@ parser.add_argument('--belief-size', type=int, default=200, metavar='H', help='B
 parser.add_argument('--state-size', type=int, default=30, metavar='Z', help='State/latent size')
 parser.add_argument('--action-repeat', type=int, default=2, metavar='R', help='Action repeat')
 parser.add_argument('--action-noise', type=float, default=0.3, metavar='ε', help='Action noise')
-parser.add_argument('--episodes', type=int, default=2000, metavar='E', help='Total number of episodes')
+parser.add_argument('--episodes', type=int, default=1000, metavar='E', help='Total number of episodes')
 parser.add_argument('--seed-episodes', type=int, default=5, metavar='S', help='Seed episodes')
 parser.add_argument('--collect-interval', type=int, default=100, metavar='C', help='Collect interval')
 parser.add_argument('--batch-size', type=int, default=50, metavar='B', help='Batch size')
@@ -40,7 +40,7 @@ parser.add_argument('--overshooting-kl-beta', type=float, default=0, metavar='β
 parser.add_argument('--overshooting-reward-scale', type=float, default=0, metavar='R>1', help='Latent overshooting reward prediction weight for t > 1 (0 to disable)')
 parser.add_argument('--global-kl-beta', type=float, default=0, metavar='βg', help='Global KL weight (0 to disable)')
 parser.add_argument('--free-nats', type=float, default=3, metavar='F', help='Free nats')
-parser.add_argument('--learning-rate', type=float, default=1e-3, metavar='α', help='Learning rate')  # TODO: Original has a linear learning rate decay, but it seems unlikely that this makes a significant difference
+parser.add_argument('--learning-rate', type=float, default=1e-3, metavar='α', help='Learning rate')  # Note that original has a linear learning rate decay, but it seems unlikely that this makes a significant difference
 parser.add_argument('--grad-clip-norm', type=float, default=1000, metavar='C', help='Gradient clipping norm')
 parser.add_argument('--planning-horizon', type=int, default=12, metavar='H', help='Planning horizon distance')
 parser.add_argument('--optimisation-iters', type=int, default=10, metavar='I', help='Planning optimisation iterations')
