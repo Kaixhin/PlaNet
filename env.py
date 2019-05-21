@@ -8,8 +8,15 @@ CONTROL_SUITE_ENVS = ['cartpole-balance', 'cartpole-swingup', 'reacher-easy', 'f
 CONTROL_SUITE_ACTION_REPEATS = {'cartpole': 8, 'reacher': 4, 'finger': 2, 'cheetah': 4, 'ball_in_cup': 6, 'walker': 2}
 
 
+def _images_to_observation(images, bit_depth):
+  images = torch.tensor(cv2.resize(images, (64, 64), interpolation=cv2.INTER_LINEAR).transpose(2, 0, 1), dtype=torch.float32)  # Resize
+  images.div_(2 ** (8 - bit_depth)).floor_().div_(2 ** bit_depth)  # Quantise to given bit depth (note that original implementation also centers data)
+  images.add_(torch.rand_like(images).div_(2 ** bit_depth))  # Dequantise (to approx. match likelihood of PDF of continuous images vs. PMF of discrete images)
+  return images.unsqueeze(dim=0)  # Add batch dimension
+
+
 class ControlSuiteEnv():
-  def __init__(self, env, symbolic, seed, max_episode_length, action_repeat):
+  def __init__(self, env, symbolic, seed, max_episode_length, action_repeat, bit_depth):
     from dm_control import suite
     from dm_control.suite.wrappers import pixels
     domain, task = env.split('-')
@@ -21,6 +28,7 @@ class ControlSuiteEnv():
     self.action_repeat = action_repeat
     if action_repeat != CONTROL_SUITE_ACTION_REPEATS[domain]:
       print('Using action repeat %d; recommended action repeat for domain is %d' % (action_repeat, CONTROL_SUITE_ACTION_REPEATS[domain]))
+    self.bit_depth = bit_depth
 
   def reset(self):
     self.t = 0  # Reset internal timer
@@ -28,7 +36,7 @@ class ControlSuiteEnv():
     if self.symbolic:
       return torch.tensor(np.concatenate([np.array([obs]) if isinstance(obs, float) else obs for obs in state.observation.values()], axis=0), dtype=torch.float32).unsqueeze(dim=0)
     else:
-      return torch.tensor(cv2.resize(self._env.physics.render(camera_id=0), (64, 64), interpolation=cv2.INTER_LINEAR).transpose(2, 0, 1), dtype=torch.float32).div_(255).unsqueeze(dim=0)
+      return _images_to_observation(self._env.physics.render(camera_id=0), self.bit_depth)
 
   def step(self, action):
     action = action.detach().numpy()
@@ -43,7 +51,7 @@ class ControlSuiteEnv():
     if self.symbolic:
       observation = torch.tensor(np.concatenate([np.array([obs]) if isinstance(obs, float) else obs for obs in state.observation.values()], axis=0), dtype=torch.float32).unsqueeze(dim=0)
     else:
-      observation = torch.tensor(cv2.resize(self._env.physics.render(camera_id=0), (64, 64), interpolation=cv2.INTER_LINEAR).transpose(2, 0, 1), dtype=torch.float32).div_(255).unsqueeze(dim=0)
+      observation = _images_to_observation(self._env.physics.render(camera_id=0), self.bit_depth)
     return observation, reward, done
 
   def render(self):
@@ -70,13 +78,14 @@ class ControlSuiteEnv():
 
 
 class GymEnv():
-  def __init__(self, env, symbolic, seed, max_episode_length, action_repeat):
+  def __init__(self, env, symbolic, seed, max_episode_length, action_repeat, bit_depth):
     import gym
     self.symbolic = symbolic
     self._env = gym.make(env)
     self._env.seed(seed)
     self.max_episode_length = max_episode_length
     self.action_repeat = action_repeat
+    self.bit_depth = bit_depth
 
   def reset(self):
     self.t = 0  # Reset internal timer
@@ -84,7 +93,7 @@ class GymEnv():
     if self.symbolic:
       return torch.tensor(state, dtype=torch.float32).unsqueeze(dim=0)
     else:
-      return torch.tensor(cv2.resize(self._env.render(mode='rgb_array'), (64, 64), interpolation=cv2.INTER_LINEAR).transpose(2, 0, 1), dtype=torch.float32).div_(255).unsqueeze(dim=0)
+      return _images_to_observation(self._env.render(mode='rgb_array'), self.bit_depth)
   
   def step(self, action):
     action = action.detach().numpy()
@@ -99,7 +108,7 @@ class GymEnv():
     if self.symbolic:
       observation = torch.tensor(state, dtype=torch.float32).unsqueeze(dim=0)
     else:
-      observation = torch.tensor(cv2.resize(self._env.render(mode='rgb_array'), (64, 64), interpolation=cv2.INTER_LINEAR).transpose(2, 0, 1), dtype=torch.float32).div_(255).unsqueeze(dim=0)
+      observation = _images_to_observation(self._env.render(mode='rgb_array'), self.bit_depth)
     return observation, reward, done
 
   def render(self):
@@ -121,11 +130,11 @@ class GymEnv():
     return torch.from_numpy(self._env.action_space.sample())
 
 
-def Env(env, symbolic, seed, max_episode_length, action_repeat):
+def Env(env, symbolic, seed, max_episode_length, action_repeat, bit_depth):
   if env in GYM_ENVS:
-    return GymEnv(env, symbolic, seed, max_episode_length, action_repeat)
+    return GymEnv(env, symbolic, seed, max_episode_length, action_repeat, bit_depth)
   elif env in CONTROL_SUITE_ENVS:
-    return ControlSuiteEnv(env, symbolic, seed, max_episode_length, action_repeat)
+    return ControlSuiteEnv(env, symbolic, seed, max_episode_length, action_repeat, bit_depth)
 
 
 # Wrapper for batching environments together

@@ -40,6 +40,7 @@ parser.add_argument('--overshooting-kl-beta', type=float, default=0, metavar='β
 parser.add_argument('--overshooting-reward-scale', type=float, default=0, metavar='R>1', help='Latent overshooting reward prediction weight for t > 1 (0 to disable)')
 parser.add_argument('--global-kl-beta', type=float, default=0, metavar='βg', help='Global KL weight (0 to disable)')
 parser.add_argument('--free-nats', type=float, default=3, metavar='F', help='Free nats')
+parser.add_argument('--bit-depth', type=int, default=5, metavar='B', help='Image bit depth (quantisation)')
 parser.add_argument('--learning-rate', type=float, default=1e-3, metavar='α', help='Learning rate')  # Note that original has a linear learning rate decay, but it seems unlikely that this makes a significant difference
 parser.add_argument('--grad-clip-norm', type=float, default=1000, metavar='C', help='Gradient clipping norm')
 parser.add_argument('--planning-horizon', type=int, default=12, metavar='H', help='Planning horizon distance')
@@ -48,7 +49,7 @@ parser.add_argument('--candidates', type=int, default=1000, metavar='J', help='C
 parser.add_argument('--top-candidates', type=int, default=100, metavar='K', help='Number of top candidates to fit')
 parser.add_argument('--test-interval', type=int, default=25, metavar='I', help='Test interval (episodes)')
 parser.add_argument('--test-episodes', type=int, default=10, metavar='E', help='Number of test episodes')
-parser.add_argument('--checkpoint-interval', type=int, default=25, metavar='I', help='Checkpoint interval (episodes)')
+parser.add_argument('--checkpoint-interval', type=int, default=50, metavar='I', help='Checkpoint interval (episodes)')
 parser.add_argument('--checkpoint-experience', action='store_true', help='Checkpoint experience replay')
 parser.add_argument('--load-experience', action='store_true', help='Load experience replay (from checkpoint dir)')
 parser.add_argument('--load-checkpoint', type=int, default=0, metavar='E', help='Load model checkpoint (from given episode)')
@@ -74,7 +75,7 @@ metrics = {'steps': [], 'episodes': [], 'train_rewards': [], 'test_episodes': []
 
 
 # Initialise training environment and experience replay memory
-env = Env(args.env, args.symbolic_env, args.seed, args.max_episode_length, args.action_repeat)
+env = Env(args.env, args.symbolic_env, args.seed, args.max_episode_length, args.action_repeat, args.bit_depth)
 if args.load_experience:
   D = torch.load(os.path.join('checkpoints', 'experience.pth'))
   metrics['steps'], metrics['episodes'] = [D.steps] * D.episodes, list(range(1, D.episodes + 1))
@@ -207,7 +208,7 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
     reward_model.eval()
     encoder.eval()
     # Initialise parallelised test environments
-    test_envs = EnvBatcher(Env, (args.env, args.symbolic_env, args.seed, args.max_episode_length, args.action_repeat), {}, args.test_episodes)
+    test_envs = EnvBatcher(Env, (args.env, args.symbolic_env, args.seed, args.max_episode_length, args.action_repeat, args.bit_depth), {}, args.test_episodes)
     
     with torch.no_grad():
       observation, total_rewards, video_frames = test_envs.reset(), np.zeros((args.test_episodes, )), []
