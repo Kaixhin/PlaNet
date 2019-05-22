@@ -8,10 +8,14 @@ CONTROL_SUITE_ENVS = ['cartpole-balance', 'cartpole-swingup', 'reacher-easy', 'f
 CONTROL_SUITE_ACTION_REPEATS = {'cartpole': 8, 'reacher': 4, 'finger': 2, 'cheetah': 4, 'ball_in_cup': 6, 'walker': 2}
 
 
-def _images_to_observation(images, bit_depth):
-  images = torch.tensor(cv2.resize(images, (64, 64), interpolation=cv2.INTER_LINEAR).transpose(2, 0, 1), dtype=torch.float32)  # Resize
-  images.div_(2 ** (8 - bit_depth)).floor_().div_(2 ** bit_depth)  # Quantise to given bit depth (note that original implementation also centers data)
+def quantise_centre_dequantise(images, bit_depth):
+  images.div_(2 ** (8 - bit_depth)).floor_().div_(2 ** bit_depth).sub_(0.5)  # Quantise to given bit depth and centre
   images.add_(torch.rand_like(images).div_(2 ** bit_depth))  # Dequantise (to approx. match likelihood of PDF of continuous images vs. PMF of discrete images)
+
+
+def _images_to_observation(images, bit_depth):
+  images = torch.tensor(cv2.resize(images, (64, 64), interpolation=cv2.INTER_LINEAR).transpose(2, 0, 1), dtype=torch.float32)  # Resize and put channel first
+  quantise_centre_dequantise(images, bit_depth)  # Quantise, centre and dequantise inplace
   return images.unsqueeze(dim=0)  # Add batch dimension
 
 

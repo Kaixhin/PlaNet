@@ -1,9 +1,10 @@
 import numpy as np
 import torch
+from env import quantise_centre_dequantise
 
 
 class ExperienceReplay():
-  def __init__(self, size, symbolic_env, observation_size, action_size, device):
+  def __init__(self, size, symbolic_env, observation_size, action_size, bit_depth, device):
     self.device = device
     self.symbolic_env = symbolic_env
     self.size = size
@@ -14,12 +15,13 @@ class ExperienceReplay():
     self.idx = 0
     self.full = False  # Tracks if memory has been filled/all slots are valid
     self.steps, self.episodes = 0, 0  # Tracks how much experience has been used in total
+    self.bit_depth = bit_depth
 
   def append(self, observation, action, reward, done):
     if self.symbolic_env:
       self.observations[self.idx] = observation.numpy()
     else:
-      self.observations[self.idx] = np.multiply(observation.numpy(), 255.).astype(np.uint8)  # Discretise visual observations (to save memory)
+      self.observations[self.idx] = np.multiply(observation.numpy() + 0.5, 255.).astype(np.uint8)  # Decentre and discretise visual observations (to save memory)
     self.actions[self.idx] = action.numpy()
     self.rewards[self.idx] = reward
     self.nonterminals[self.idx] = not done
@@ -38,12 +40,12 @@ class ExperienceReplay():
 
   def _retrieve_batch(self, idxs, n, L):
     vec_idxs = idxs.transpose().reshape(-1)  # Unroll indices
-    observations = self.observations[vec_idxs].astype(np.float32)
+    observations = torch.as_tensor(self.observations[vec_idxs].astype(np.float32))
     if not self.symbolic_env:
-      observations = np.divide(observations, 255.)  # Undo discretisation for visual observations
+      quantise_centre_dequantise(observations, self.bit_depth)  # Undo discretisation for visual observations
     return observations.reshape(L, n, *observations.shape[1:]), self.actions[vec_idxs].reshape(L, n, -1), self.rewards[vec_idxs].reshape(L, n), self.nonterminals[vec_idxs].reshape(L, n, 1)
 
   # Returns a batch of sequence chunks uniformly sampled from the memory
   def sample(self, n, L):
     batch = self._retrieve_batch(np.asarray([self._sample_idx(L) for _ in range(n)]), n, L)
-    return [torch.from_numpy(item).to(device=self.device) for item in batch]
+    return [torch.as_tensor(item).to(device=self.device) for item in batch]
