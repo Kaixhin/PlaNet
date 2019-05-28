@@ -1,6 +1,6 @@
 import numpy as np
 import torch
-from env import quantise_centre_dequantise
+from env import postprocess_observation, preprocess_observation_
 
 
 class ExperienceReplay():
@@ -21,7 +21,7 @@ class ExperienceReplay():
     if self.symbolic_env:
       self.observations[self.idx] = observation.numpy()
     else:
-      self.observations[self.idx] = np.multiply(observation.numpy() + 0.5, 255.).astype(np.uint8)  # Decentre and discretise visual observations (to save memory)
+      self.observations[self.idx] = postprocess_observation(observation.numpy(), self.bit_depth)  # Decentre and discretise visual observations (to save memory)
     self.actions[self.idx] = action.numpy()
     self.rewards[self.idx] = reward
     self.nonterminals[self.idx] = not done
@@ -42,7 +42,7 @@ class ExperienceReplay():
     vec_idxs = idxs.transpose().reshape(-1)  # Unroll indices
     observations = torch.as_tensor(self.observations[vec_idxs].astype(np.float32))
     if not self.symbolic_env:
-      quantise_centre_dequantise(observations, self.bit_depth)  # Undo discretisation for visual observations
+      preprocess_observation_(observations, self.bit_depth)  # Undo discretisation for visual observations
     return observations.reshape(L, n, *observations.shape[1:]), self.actions[vec_idxs].reshape(L, n, -1), self.rewards[vec_idxs].reshape(L, n), self.nonterminals[vec_idxs].reshape(L, n, 1)
 
   # Returns a batch of sequence chunks uniformly sampled from the memory

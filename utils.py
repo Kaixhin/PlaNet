@@ -12,7 +12,7 @@ def lineplot(xs, ys_population, title, path='', xaxis='episode'):
 
   if isinstance(ys_population[0], list) or isinstance(ys_population[0], tuple):
     ys = np.asarray(ys_population, dtype=np.float32)
-    ys_min, ys_max, ys_mean, ys_std = ys.min(1), ys.max(1), ys.mean(1), ys.std(1)
+    ys_min, ys_max, ys_mean, ys_std, ys_median = ys.min(1), ys.max(1), ys.mean(1), ys.std(1), np.median(ys, 1)
     ys_upper, ys_lower = ys_mean + ys_std, ys_mean - ys_std
 
     trace_max = Scatter(x=xs, y=ys_max, line=Line(color=max_colour, dash='dash'), name='Max')
@@ -20,7 +20,8 @@ def lineplot(xs, ys_population, title, path='', xaxis='episode'):
     trace_mean = Scatter(x=xs, y=ys_mean, fill='tonexty', fillcolor=std_colour, line=Line(color=mean_colour), name='Mean')
     trace_lower = Scatter(x=xs, y=ys_lower, fill='tonexty', fillcolor=std_colour, line=Line(color=transparent), name='-1 Std. Dev.', showlegend=False)
     trace_min = Scatter(x=xs, y=ys_min, line=Line(color=max_colour, dash='dash'), name='Min')
-    data = [trace_upper, trace_mean, trace_lower, trace_min, trace_max]
+    trace_median = Scatter(x=xs, y=ys_median, line=Line(color=max_colour), name='Median')
+    data = [trace_upper, trace_mean, trace_lower, trace_min, trace_max, trace_median]
   else:
     data = [Scatter(x=xs, y=ys_population, line=Line(color=mean_colour))]
   plotly.offline.plot({
