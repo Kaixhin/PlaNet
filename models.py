@@ -158,6 +158,8 @@ class VisualEncoder(jit.ScriptModule):
     self.conv2 = nn.Conv2d(32, 64, 4, stride=2)
     self.conv3 = nn.Conv2d(64, 128, 4, stride=2)
     self.conv4 = nn.Conv2d(128, 256, 4, stride=2)
+    if embedding_size != 1024:
+      self.fc = nn.Linear(1024, embedding_size)
 
   @jit.script_method
   def forward(self, observation):
@@ -165,7 +167,9 @@ class VisualEncoder(jit.ScriptModule):
     hidden = self.act_fn(self.conv2(hidden))
     hidden = self.act_fn(self.conv3(hidden))
     hidden = self.act_fn(self.conv4(hidden))
-    hidden = hidden.view(-1, self.embedding_size)
+    hidden = hidden.view(-1, 1024)
+    if self.embedding_size != 1024:
+      hidden = self.fc(hidden)
     return hidden
 
 
