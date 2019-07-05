@@ -19,11 +19,11 @@ class TransitionModel(jit.ScriptModule):
     super().__init__()
     self.act_fn = getattr(F, activation_function)
     self.min_std_dev = min_std_dev
-    self.fc_embed_state_action = nn.Linear(state_size + action_size, hidden_size)
-    self.rnn = nn.GRUCell(hidden_size, hidden_size)
-    self.fc_embed_belief_prior = nn.Linear(hidden_size, hidden_size)
+    self.fc_embed_state_action = nn.Linear(state_size + action_size, belief_size)
+    self.rnn = nn.GRUCell(belief_size, belief_size)
+    self.fc_embed_belief_prior = nn.Linear(belief_size, hidden_size)
     self.fc_state_prior = nn.Linear(hidden_size, 2 * state_size)
-    self.fc_embed_belief_posterior = nn.Linear(hidden_size + embedding_size, hidden_size)
+    self.fc_embed_belief_posterior = nn.Linear(belief_size + embedding_size, hidden_size)
     self.fc_state_posterior = nn.Linear(hidden_size, 2 * state_size)
 
   # Operates over (previous) state, (previous) actions, (previous) belief, (previous) nonterminals (mask), and (current) observations
