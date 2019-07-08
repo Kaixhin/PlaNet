@@ -160,11 +160,16 @@ class EnvBatcher():
     self.dones = [False] * self.n
     return torch.cat(observations)
 
-  # Steps/resets every environment and returns (observation, reward, done); returns blank observation once done
+ # Steps/resets every environment and returns (observation, reward, done)
   def step(self, actions):
+    done_mask = torch.nonzero(torch.tensor(self.dones))[:, 0]  # Done mask to blank out observations and zero rewards for previously terminated environments
     observations, rewards, dones = zip(*[env.step(action) for env, action in zip(self.envs, actions)])
+    dones = [d or prev_d for d, prev_d in zip(dones, self.dones)]  # Env should remain terminated if previously terminated
     self.dones = dones
-    return torch.cat(observations), torch.tensor(rewards, dtype=torch.float32), torch.tensor(dones, dtype=torch.uint8)
+    observations, rewards, dones = torch.cat(observations), torch.tensor(rewards, dtype=torch.float32), torch.tensor(dones, dtype=torch.uint8)
+    observations[done_mask] = 0
+    rewards[done_mask] = 0
+    return observations, rewards, dones
 
   def close(self):
     [env.close() for env in self.envs]
