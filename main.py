@@ -51,12 +51,13 @@ parser.add_argument('--planning-horizon', type=int, default=12, metavar='H', hel
 parser.add_argument('--optimisation-iters', type=int, default=10, metavar='I', help='Planning optimisation iterations')
 parser.add_argument('--candidates', type=int, default=1000, metavar='J', help='Candidate samples per iteration')
 parser.add_argument('--top-candidates', type=int, default=100, metavar='K', help='Number of top candidates to fit')
+parser.add_argument('--test', action='store_true', help='Test only')
 parser.add_argument('--test-interval', type=int, default=25, metavar='I', help='Test interval (episodes)')
 parser.add_argument('--test-episodes', type=int, default=10, metavar='E', help='Number of test episodes')
 parser.add_argument('--checkpoint-interval', type=int, default=50, metavar='I', help='Checkpoint interval (episodes)')
 parser.add_argument('--checkpoint-experience', action='store_true', help='Checkpoint experience replay')
-parser.add_argument('--load-experience', action='store_true', help='Load experience replay (from checkpoint dir)')
-parser.add_argument('--load-checkpoint', type=int, default=0, metavar='E', help='Load model checkpoint (from given episode)')
+parser.add_argument('--models', type=str, default='', metavar='M', help='Load model checkpoint')
+parser.add_argument('--experience-replay', type=str, default='', metavar='ER', help='Load experience replay')
 parser.add_argument('--render', action='store_true', help='Render environment')
 args = parser.parse_args()
 args.overshooting_distance = min(args.chunk_size, args.overshooting_distance)  # Overshooting distance cannot be greater than chunk size
@@ -80,10 +81,10 @@ metrics = {'steps': [], 'episodes': [], 'train_rewards': [], 'test_episodes': []
 
 # Initialise training environment and experience replay memory
 env = Env(args.env, args.symbolic_env, args.seed, args.max_episode_length, args.action_repeat, args.bit_depth)
-if args.load_experience:
-  D = torch.load(os.path.join(results_dir, 'experience.pth'))
+if args.experience_replay is not '' and os.path.exists(args.experience_replay):
+  D = torch.load(args.experience_replay)
   metrics['steps'], metrics['episodes'] = [D.steps] * D.episodes, list(range(1, D.episodes + 1))
-else:
+elif not args.test:
   D = ExperienceReplay(args.experience_size, args.symbolic_env, env.observation_size, env.action_size, args.bit_depth, args.device)
   # Initialise dataset D with S random seed episodes
   for s in range(1, args.seed_episodes + 1):
@@ -105,8 +106,8 @@ reward_model = RewardModel(args.belief_size, args.state_size, args.hidden_size, 
 encoder = Encoder(args.symbolic_env, env.observation_size, args.embedding_size, args.activation_function).to(device=args.device)
 param_list = list(transition_model.parameters()) + list(observation_model.parameters()) + list(reward_model.parameters()) + list(encoder.parameters())
 optimiser = optim.Adam(param_list, lr=0 if args.learning_rate_schedule != 0 else args.learning_rate, eps=args.adam_epsilon)
-if args.load_checkpoint > 0:
-  model_dicts = torch.load(os.path.join(results_dir, 'models_%d.pth' % args.load_checkpoint))
+if args.models is not '' and os.path.exists(args.models):
+  model_dicts = torch.load(args.models)
   transition_model.load_state_dict(model_dicts['transition_model'])
   observation_model.load_state_dict(model_dicts['observation_model'])
   reward_model.load_state_dict(model_dicts['reward_model'])
@@ -128,6 +129,28 @@ def update_belief_and_act(args, env, planner, transition_model, encoder, belief,
   return belief, posterior_state, action, next_observation, reward, done
 
 
+# Testing only
+if args.test:
+  with torch.no_grad():
+    total_reward = 0
+    for _ in tqdm(range(args.test_episodes)):
+      observation = env.reset()
+      belief, posterior_state, action = torch.zeros(1, args.belief_size, device=args.device), torch.zeros(1, args.state_size, device=args.device), torch.zeros(1, env.action_size, device=args.device)
+      pbar = tqdm(range(args.max_episode_length // args.action_repeat))
+      for t in pbar:
+        belief, posterior_state, action, observation, reward, done = update_belief_and_act(args, env, planner, transition_model, encoder, belief, posterior_state, action, observation.to(device=args.device), test=True)
+        total_reward += reward
+        if args.render:
+          env.render()
+        if done:
+          pbar.close()
+          break
+  print('Average Reward:', total_reward / args.test_episodes)
+  env.close()
+  quit()
+
+
+# Training (and testing)
 for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total=args.episodes, initial=metrics['episodes'][-1] + 1):
   # Model fitting
   losses = []
