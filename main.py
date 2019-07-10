@@ -131,6 +131,10 @@ def update_belief_and_act(args, env, planner, transition_model, encoder, belief,
 
 # Testing only
 if args.test:
+  # Set models to eval mode
+  transition_model.eval()
+  reward_model.eval()
+  encoder.eval()
   with torch.no_grad():
     total_reward = 0
     for _ in tqdm(range(args.test_episodes)):
