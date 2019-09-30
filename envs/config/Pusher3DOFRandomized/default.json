@@ -1,0 +1,17 @@
+{
+  "env": "Pusher3DOFDefault-v0",
+  "dimensions": [
+    {
+      "name": "frictionloss",
+      "default": 0.01,
+      "multiplier_min": 1.0,
+      "multiplier_max": 1.0
+    },
+    {
+      "name": "damping",
+      "default": 0.025,
+      "multiplier_min": 1.0,
+      "multiplier_max": 1.0
+    }
+  ]
+}

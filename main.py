@@ -14,6 +14,14 @@ from models import bottle, Encoder, ObservationModel, RewardModel, TransitionMod
 from planner import MPCPlanner
 from utils import lineplot, write_video
 
+# myPath = os.getcwd()
+
+# For MILA
+myPath = "/network/home/rajrohan/PlaNet"
+
+# To calculate Run Time
+from datetime import datetime
+start=datetime.now()
 
 # Hyperparameters
 parser = argparse.ArgumentParser(description='PlaNet')
@@ -65,10 +73,26 @@ print(' ' * 26 + 'Options')
 for k, v in vars(args).items():
   print(' ' * 26 + k + ': ' + str(v))
 
+# For registering our environment
+if args.env in GYM_ENVS:
+    import gym
+    from gym.envs.registration import register
+    # Register My environment
+    register(
+      id='Pusher3DOFDefault-v0',
+      entry_point='envs.pusher3dof:PusherEnv3DofEnv',
+      max_episode_steps=100,
+      kwargs={'config': 'envs/config/Pusher3DOFRandomized/default.json'}
+    )
 
 # Setup
-results_dir = os.path.join('results', args.id)
+results_dir = os.path.join(myPath, 'results', args.id)
 os.makedirs(results_dir, exist_ok=True)
+
+# For Latent State Saving
+latenSubName = 'latent'
+os.makedirs(os.path.join(results_dir, latenSubName), exist_ok=True)
+
 np.random.seed(args.seed)
 torch.manual_seed(args.seed)
 if torch.cuda.is_available() and not args.disable_cuda:
@@ -92,6 +116,7 @@ elif not args.test:
     while not done:
       action = env.sample_random_action()
       next_observation, reward, done = env.step(action)
+      # print(next_observation.shape, '   ############')
       D.append(observation, action, reward, done)
       observation = next_observation
       t += 1
@@ -153,7 +178,7 @@ if args.test:
   env.close()
   quit()
 
-
+print('Training Dada')
 # Training (and testing)
 for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total=args.episodes, initial=metrics['episodes'][-1] + 1):
   # Model fitting
@@ -161,14 +186,18 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
   for s in tqdm(range(args.collect_interval)):
     # Draw sequence chunks {(o_t, a_t, r_t+1, terminal_t+1)} ~ D uniformly at random from the dataset (including terminal flags)
     observations, actions, rewards, nonterminals = D.sample(args.batch_size, args.chunk_size)  # Transitions start at time t = 0
+
     # Create initial belief and state for time t = 0
     init_belief, init_state = torch.zeros(args.batch_size, args.belief_size, device=args.device), torch.zeros(args.batch_size, args.state_size, device=args.device)
     # Update belief/state using posterior from previous belief/state, previous action and current observation (over entire sequence at once)
     beliefs, prior_states, prior_means, prior_std_devs, posterior_states, posterior_means, posterior_std_devs = transition_model(init_state, actions[:-1], init_belief, bottle(encoder, (observations[1:], )), nonterminals[:-1])
     # Calculate observation likelihood, reward likelihood and KL losses (for t = 0 only for latent overshooting); sum over final dims, average over batch and time (original implementation, though paper seems to miss 1/T scaling?)
+
     observation_loss = F.mse_loss(bottle(observation_model, (beliefs, posterior_states)), observations[1:], reduction='none').sum(dim=2 if args.symbolic_env else (2, 3, 4)).mean(dim=(0, 1))
     reward_loss = F.mse_loss(bottle(reward_model, (beliefs, posterior_states)), rewards[:-1], reduction='none').mean(dim=(0, 1))
+
     kl_loss = torch.max(kl_divergence(Normal(posterior_means, posterior_std_devs), Normal(prior_means, prior_std_devs)).sum(dim=2), free_nats).mean(dim=(0, 1))  # Note that normalisation by overshooting distance and weighting by overshooting distance cancel out
+    # print (type(beliefs))
     if args.global_kl_beta != 0:
       kl_loss += args.global_kl_beta * kl_divergence(Normal(posterior_means, posterior_std_devs), global_prior).sum(dim=2).mean(dim=(0, 1))
     # Calculate latent overshooting objective for t > 0
@@ -267,6 +296,8 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
     if not args.symbolic_env:
       episode_str = str(episode).zfill(len(str(args.episodes)))
       write_video(video_frames, 'test_episode_%s' % episode_str, results_dir)  # Lossy compression
+      for i in range(len(video_frames)):
+        save_image(torch.as_tensor(video_frames[i]), os.path.join(results_dir, latenSubName, 'test_episode_%s_%s.png' % (episode_str, str(i))))
       save_image(torch.as_tensor(video_frames[-1]), os.path.join(results_dir, 'test_episode_%s.png' % episode_str))
     torch.save(metrics, os.path.join(results_dir, 'metrics.pth'))
 
@@ -288,3 +319,5 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
 
 # Close training environment
 env.close()
+print ('The total Time taken is : ')
+print (datetime.now()-start)
