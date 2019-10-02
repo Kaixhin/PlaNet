@@ -2,8 +2,13 @@ import os
 import cv2
 import numpy as np
 import plotly
+import plotly.graph_objects as go
 from plotly.graph_objs import Scatter
 from plotly.graph_objs.scatter import Line
+<<<<<<< HEAD
+=======
+import matplotlib.pyplot as plt
+>>>>>>> MILA
 
 # Plots min, max and mean + standard deviation bars of a population over time
 def lineplot(xs, ys_population, title, path='', xaxis='episode'):
@@ -23,10 +28,17 @@ def lineplot(xs, ys_population, title, path='', xaxis='episode'):
     data = [trace_upper, trace_mean, trace_lower, trace_min, trace_max, trace_median]
   else:
     data = [Scatter(x=xs, y=ys_population, line=Line(color=mean_colour))]
-  plotly.offline.plot({
-    'data': data,
+
+  #TODO : check if working
+  fig = go.Figure({
+    'data' : data,
     'layout': dict(title=title, xaxis={'title': xaxis}, yaxis={'title': title})
-  }, filename=os.path.join(path, title + '.html'), auto_open=False)
+    })
+  fig.write_image(os.path.join(path, title + '.png'))  
+  # plotly.offline.plot({
+  #   'data': data,
+  #   'layout': dict(title=title, xaxis={'title': xaxis}, yaxis={'title': title})
+  # }, filename=os.path.join(path, title + '.html'), auto_open=False)
 
 
 def write_video(frames, title, path=''):

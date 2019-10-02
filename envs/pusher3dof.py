@@ -81,8 +81,8 @@ class PusherEnv3DofEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         goal_dist = np.linalg.norm(self.get_body_com("object")[:2] - self.get_body_com("goal")[:2])
 
         # Reward from Soft Q Learning
-        action_cost = np.square(action).sum()
-        reward = -0.1 * action_cost - goal_dist
+        # action_cost = np.square(action).sum()
+        reward = -goal_dist
 
         self.do_simulation(action, self.frame_skip)
         ob = self._get_obs()

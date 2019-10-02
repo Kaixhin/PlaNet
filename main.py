@@ -1,6 +1,7 @@
 import argparse
 import os
 import numpy as np
+import pickle
 import torch
 from torch import nn, optim
 from torch.distributions import Normal
@@ -30,7 +31,7 @@ parser.add_argument('--seed', type=int, default=1, metavar='S', help='Random see
 parser.add_argument('--disable-cuda', action='store_true', help='Disable CUDA')
 parser.add_argument('--env', type=str, default='Pendulum-v0', choices=GYM_ENVS + CONTROL_SUITE_ENVS, help='Gym/Control Suite environment')
 parser.add_argument('--symbolic-env', action='store_true', help='Symbolic features')
-parser.add_argument('--max-episode-length', type=int, default=1000, metavar='T', help='Max episode length')
+parser.add_argument('--max-episode-length', type=int, default=100, metavar='T', help='Max episode length')
 parser.add_argument('--experience-size', type=int, default=1000000, metavar='D', help='Experience replay size')  # Original implementation has an unlimited buffer size, but 1 million is the max experience collected anyway
 parser.add_argument('--activation-function', type=str, default='relu', choices=dir(F), help='Model activation function')
 parser.add_argument('--embedding-size', type=int, default=1024, metavar='E', help='Observation embedding size')  # Note that the default encoder for visual observations outputs a 1024D vector; for other embedding sizes an additional fully-connected layer is used
@@ -85,13 +86,31 @@ if args.env in GYM_ENVS:
       kwargs={'config': 'envs/config/Pusher3DOFRandomized/default.json'}
     )
 
-# Setup
-results_dir = os.path.join(myPath, 'results', args.id)
-os.makedirs(results_dir, exist_ok=True)
-
 # For Latent State Saving
 latenSubName = 'latent'
+
+# Setup Saving Folder
+if os.environ.get('SLURM_ARRAY_TASK_ID') is not None:
+    array_job_id = int(os.environ.get('SLURM_ARRAY_TASK_ID'))
+    args.seed += array_job_id
+    results_dir = os.path.join(myPath, 'ArrayResults', args.id, str(array_job_id))
+else:
+    results_dir = os.path.join(myPath, 'results', args.id)
+
+# Make results folder
+os.makedirs(results_dir, exist_ok=True)
+
+# Make latent folder
 os.makedirs(os.path.join(results_dir, latenSubName), exist_ok=True)
+
+# Save argParse values
+file = open(os.path.join(results_dir, "Arguments.txt"), "w")
+argsDict = vars(args)
+argsVariables = sorted(list(argsDict))
+for argsVar in argsVariables:
+    file.write(str(argsVar), "\t:\t", str(argsDict[argsVar]))
+file.close()
+
 
 np.random.seed(args.seed)
 torch.manual_seed(args.seed)
@@ -321,3 +340,7 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
 env.close()
 print ('The total Time taken is : ')
 print (datetime.now()-start)
+
+# Pickle Dump Metrics
+with open(os.path.join(results_dir, 'metrics.pkl'), 'wb') as f:
+    pickle.dump(mylist, f)
