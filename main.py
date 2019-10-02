@@ -15,10 +15,10 @@ from models import bottle, Encoder, ObservationModel, RewardModel, TransitionMod
 from planner import MPCPlanner
 from utils import lineplot, write_video
 
-# myPath = os.getcwd()
+myPath = os.getcwd()
 
 # For MILA
-myPath = "/network/home/rajrohan/PlaNet"
+# myPath = "/network/home/rajrohan/PlaNet"
 
 # To calculate Run Time
 from datetime import datetime
@@ -108,7 +108,7 @@ file = open(os.path.join(results_dir, "Arguments.txt"), "w")
 argsDict = vars(args)
 argsVariables = sorted(list(argsDict))
 for argsVar in argsVariables:
-    file.write(str(argsVar), "\t:\t", str(argsDict[argsVar]))
+    file.write(str(argsVar) + "\t:\t" + str(argsDict[argsVar]))
 file.close()
 
 

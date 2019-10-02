@@ -5,10 +5,6 @@ import plotly
 import plotly.graph_objects as go
 from plotly.graph_objs import Scatter
 from plotly.graph_objs.scatter import Line
-<<<<<<< HEAD
-=======
-import matplotlib.pyplot as plt
->>>>>>> MILA
 
 # Plots min, max and mean + standard deviation bars of a population over time
 def lineplot(xs, ys_population, title, path='', xaxis='episode'):
