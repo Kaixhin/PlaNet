@@ -2,9 +2,10 @@ import os
 import cv2
 import numpy as np
 import plotly
-import plotly.graph_objects as go
+import plotly.graph_objs as go
 from plotly.graph_objs import Scatter
 from plotly.graph_objs.scatter import Line
+import matplotlib.pyplot as plt
 
 # Plots min, max and mean + standard deviation bars of a population over time
 def lineplot(xs, ys_population, title, path='', xaxis='episode'):
@@ -25,16 +26,17 @@ def lineplot(xs, ys_population, title, path='', xaxis='episode'):
   else:
     data = [Scatter(x=xs, y=ys_population, line=Line(color=mean_colour))]
 
-  #TODO : check if working
-  fig = go.Figure({
-    'data' : data,
-    'layout': dict(title=title, xaxis={'title': xaxis}, yaxis={'title': title})
-    })
-  fig.write_image(os.path.join(path, title + '.png'))  
-  # plotly.offline.plot({
-  #   'data': data,
+  # TODO : check if working
+  # fig = go.Figure({
+  #   'data' : data,
   #   'layout': dict(title=title, xaxis={'title': xaxis}, yaxis={'title': title})
-  # }, filename=os.path.join(path, title + '.html'), auto_open=False)
+  #   })
+  # fig.write_image(os.path.join(path, title + '.png'))
+  plotly.offline.plot({
+    'data': data,
+    'layout': dict(title=title, xaxis={'title': xaxis}, yaxis={'title': title})
+    }, image="png", image_filename = os.path.join(path, title),
+    filename=os.path.join(path, title + '.html'), auto_open=False)
 
 
 def write_video(frames, title, path=''):
