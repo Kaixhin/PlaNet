@@ -89,7 +89,9 @@ class ControlSuiteEnv():
 
 class GymEnv():
   def __init__(self, env, symbolic, seed, max_episode_length, action_repeat, bit_depth):
+    import logging
     import gym
+    gym.logger.set_level(logging.ERROR)  # Ignore warnings from Gym logger
     self.symbolic = symbolic
     self._env = gym.make(env)
     self._env.seed(seed)
