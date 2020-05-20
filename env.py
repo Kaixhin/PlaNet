@@ -80,6 +80,10 @@ class ControlSuiteEnv():
   def action_size(self):
     return self._env.action_spec().shape[0]
 
+  @property
+  def action_range(self):
+    raise NotImplementedError
+
   # Sample an action randomly from a uniform distribution over all valid actions
   def sample_random_action(self):
     spec = self._env.action_spec()
@@ -136,6 +140,10 @@ class GymEnv():
   @property
   def action_size(self):
     return self._env.action_space.shape[0]
+
+  @property
+  def action_range(self):
+    return float(self._env.action_space.low[0]), float(self._env.action_space.high[0])
 
   # Sample an action randomly from a uniform distribution over all valid actions
   def sample_random_action(self):
