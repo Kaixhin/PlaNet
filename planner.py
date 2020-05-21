@@ -1,3 +1,4 @@
+from math import inf
 import torch
 from torch import jit
 
@@ -6,7 +7,7 @@ from torch import jit
 class MPCPlanner(jit.ScriptModule):
   __constants__ = ['action_size', 'planning_horizon', 'optimisation_iters', 'candidates', 'top_candidates', 'min_action', 'max_action']
 
-  def __init__(self, action_size, planning_horizon, optimisation_iters, candidates, top_candidates, transition_model, reward_model, min_action=-1, max_action=1):
+  def __init__(self, action_size, planning_horizon, optimisation_iters, candidates, top_candidates, transition_model, reward_model, min_action=-inf, max_action=inf):
     super().__init__()
     self.transition_model, self.reward_model = transition_model, reward_model
     self.action_size, self.min_action, self.max_action = action_size, min_action, max_action
