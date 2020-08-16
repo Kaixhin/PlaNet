@@ -4,7 +4,9 @@ channels:
 dependencies:
   - plotly
   - pytorch
+  - torchvision
   - tqdm
+  - pip
   - pip:
     - gym
     - opencv-python
