@@ -126,7 +126,7 @@ def update_belief_and_act(args, env, planner, transition_model, encoder, belief,
   action = planner(belief, posterior_state)  # Get action from planner(q(s_t|o≤t,a<t), p)
   if explore:
     action = action + args.action_noise * torch.randn_like(action)  # Add exploration noise ε ~ p(ε) to the action
-  actions.clamp_(min=min_action, max=max_action)  # Clip action range
+  action.clamp_(min=min_action, max=max_action)  # Clip action range
   next_observation, reward, done = env.step(action.cpu() if isinstance(env, EnvBatcher) else action[0].cpu())  # Perform environment step (action repeats handled internally)
   return belief, posterior_state, action, next_observation, reward, done
 
