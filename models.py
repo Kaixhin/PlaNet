@@ -111,8 +111,7 @@ class VisualObservationModel(jit.ScriptModule):
 def ObservationModel(symbolic, observation_size, belief_size, state_size, embedding_size, activation_function='relu'):
   if symbolic:
     return SymbolicObservationModel(observation_size, belief_size, state_size, embedding_size, activation_function)
-  else:
-    return VisualObservationModel(belief_size, state_size, embedding_size, activation_function)
+  return VisualObservationModel(belief_size, state_size, embedding_size, activation_function)
 
 
 class RewardModel(jit.ScriptModule):
@@ -174,5 +173,4 @@ class VisualEncoder(jit.ScriptModule):
 def Encoder(symbolic, observation_size, embedding_size, activation_function='relu'):
   if symbolic:
     return SymbolicEncoder(observation_size, embedding_size, activation_function)
-  else:
-    return VisualEncoder(embedding_size, activation_function)
+  return VisualEncoder(embedding_size, activation_function)
