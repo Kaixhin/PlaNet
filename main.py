@@ -1,19 +1,20 @@
-import argparse
-from math import inf
 import os
-import numpy as np
+import sys
 import torch
-from torch import nn, optim
-from torch.distributions import Normal
-from torch.distributions.kl import kl_divergence
-from torch.nn import functional as F
-from torchvision.utils import make_grid, save_image
+import argparse
+import numpy as np
+from math import inf
 from tqdm import tqdm
-from env import CONTROL_SUITE_ENVS, Env, GYM_ENVS, EnvBatcher
-from memory import ExperienceReplay
-from models import bottle, Encoder, ObservationModel, RewardModel, TransitionModel
+from torch import nn, optim
 from planner import MPCPlanner
+from memory import ExperienceReplay
+from torch.nn import functional as F
+from torch.distributions import Normal
 from utils import lineplot, write_video
+from torch.distributions.kl import kl_divergence
+from torchvision.utils import make_grid, save_image
+from env import CONTROL_SUITE_ENVS, Env, GYM_ENVS, EnvBatcher
+from models import bottle, Encoder, ObservationModel, RewardModel, TransitionModel
 
 
 # Hyperparameters
@@ -153,7 +154,7 @@ if args.test:
           break
   print('Average Reward:', total_reward / args.test_episodes)
   env.close()
-  quit()
+  sys.exit()
 
 
 # Training (and testing)
